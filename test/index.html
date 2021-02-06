@@ -1,0 +1,197 @@
+<html>
+    <script src="/socket.js"></script>
+    <style>
+        .container:nth-child(even) {
+            background-color: white;
+        }
+        .container:nth-child(odd) {
+            background-color: #cccccc;
+        }
+        .left {
+            min-width: 256px;
+            display: inline-block;
+        }
+        .right {
+            min-width: 256px;
+            display: inline-block;
+        }
+    </style>
+</html>
+<body>
+    <div class="container">
+        <div class="left">
+            <button id="connect">Connect to a Websocket</button>
+        </div>
+        <div class="right">
+            <span id="connect-result">❓</span>
+            <span id="connect-closed-result">❓</span>
+        </div>
+    </div>
+    <div class="container">
+        <div class="left">
+            <button id="send">Send a Message Event</button>
+        </div>
+        <div class="right">
+            <span id="send-result">❓</span>
+            <span id="send-closed-result">❓</span>
+        </div>
+    </div>
+    <div class="container">
+        <div class="left">
+            <button id="close">Close a Websocket</button>
+        </div>
+        <div class="right">
+            <span id="close-result">❓</span>
+            <span id="close-closed-result">❓</span>
+        </div>
+    </div>
+    <div class="container">
+        <div class="left">
+            <button id="timeout">Close due to timeout</button>
+        </div>
+        <div class="right">
+            <span id="timeout-result">❓</span>
+            <span id="timeout-closed-result">❓</span>
+        </div>
+    </div>
+    <div class="container">
+        <div class="left">
+            <button id="timeout-change">Send a message to delay timeout</button>
+        </div>
+        <div class="right">
+            <span id="timeout-change-result">❓</span>
+            <span id="timeout-change-closed-result">❓</span>
+        </div>
+    </div>
+    <script type="application/javascript">
+        const QUESTION_RESULT = "❓";
+        const SUCCESS_RESULT = "✅";
+        const FAIL_RESULT = "❌";
+        const BASE_URL = "http://" + window.location.host + "/";
+        const SOCKET_BASE_URL = "ws://" + window.location.host + "/";
+        const CLOSE_CODE = 1000;
+        const STATUS_OK = 200;
+        const resultText = function(result) { return result ? SUCCESS_RESULT : FAIL_RESULT; }
+        
+        //
+        // CONNECT
+        // 
+        document.getElementById("connect").addEventListener("click", (event) => {
+            const resultElement = document.getElementById("connect-result");
+            const closedResultElement = document.getElementById("connect-closed-result");
+            try {
+                const s = new Socket(SOCKET_BASE_URL + "websocket_connect");
+                s.onConnect((socket, event) => {
+                    resultElement.innerText = SUCCESS_RESULT;
+                    fetch(BASE_URL + "websocket_connect_closed").then((value) => {
+                        closedResultElement.innerText = resultText(value.status == STATUS_OK);
+                    });
+                    s.close(CLOSE_CODE);
+                });
+            } catch {
+                resultElement.innerText = FAIL_RESULT;
+            }
+        });
+
+        //
+        // SEND
+        // 
+        document.getElementById("send").addEventListener("click", (event) => {
+            const resultElement = document.getElementById("send-result");
+            const closedResultElement = document.getElementById("send-closed-result");
+            try {
+                const s = new Socket(SOCKET_BASE_URL + "websocket_send");
+                s.onConnect((socket, event) => {
+                    s.send("message", { "text": "cooper" });
+                });
+                s.onEvent("response", (socket, event) => {
+                    resultElement.innerText = resultText(event.text == "responded");
+                    s.close(CLOSE_CODE);
+                    fetch(BASE_URL + "websocket_send_closed").then((value) => {
+                        closedResultElement.innerText = resultText(value.status == STATUS_OK);
+                    });
+                });
+            } catch {
+                resultElement.innerText = FAIL_RESULT;
+            }
+        });
+
+        //
+        // CLOSE
+        // 
+        document.getElementById("close").addEventListener("click", (event) => {
+            const resultElement = document.getElementById("close-result");
+            const closedResultElement = document.getElementById("close-closed-result");
+            try {
+                const s = new Socket(SOCKET_BASE_URL + "websocket_close");
+                s.onConnect((socket, event) => {
+                    s.close(CLOSE_CODE);
+                    // Wait for the close to propogate to the server.
+                    setTimeout(() => {
+                        console.log(s.readyState());
+                        resultElement.innerText = resultText(s.readyState() == Socket.STATE_CLOSED);
+                        fetch(BASE_URL + "websocket_close_closed").then((value) => {
+                            closedResultElement.innerText = resultText(value.status == STATUS_OK);
+                        });
+                    }, 500);
+                });
+            } catch {
+                resultElement.innerText = FAIL_RESULT;
+            }
+        });
+
+        const timeoutCounter = function(element, time) {
+            element.innerText = time.toString();
+            if (time > 1) {
+                setTimeout(() => { timeoutCounter(element, time - 1); }, 1000);
+            }
+        }
+
+        //
+        // TIMEOUT
+        // 
+        document.getElementById("timeout").addEventListener("click", (event) => {
+            const resultElement = document.getElementById("timeout-result");
+            const closedResultElement = document.getElementById("timeout-closed-result");
+            try {
+                const timeout = 7;
+                const s = new Socket(SOCKET_BASE_URL + "websocket_timeout");
+                timeoutCounter(resultElement, timeout);
+                setTimeout(() => {
+                    resultElement.innerText = resultText(s.readyState() == Socket.STATE_CLOSED);
+                    fetch(BASE_URL + "websocket_timeout_closed").then((value) => {
+                        closedResultElement.innerText = resultText(value.status == STATUS_OK);
+                    });
+                }, 1000 * timeout);
+            } catch {
+                resultElement.innerText = FAIL_RESULT;
+            }
+        });
+
+
+        //
+        // TIMEOUT CHANGE
+        // 
+        document.getElementById("timeout-change").addEventListener("click", (event) => {
+            const resultElement = document.getElementById("timeout-change-result");
+            const closedResultElement = document.getElementById("timeout-change-closed-result");
+            try {
+                const timeout = 4;
+                const s = new Socket(SOCKET_BASE_URL + "websocket_timeout_change");
+                timeoutCounter(resultElement, timeout);
+                setTimeout(() => {
+                    resultElement.innerText = resultText(s.readyState() == Socket.STATE_OPEN);
+                    s.send("keep_alive", {});
+                    timeoutCounter(closedResultElement, timeout);
+                    setTimeout(() => {
+                        fetch(BASE_URL + "websocket_timeout_change_closed").then((value) => {
+                            closedResultElement.innerText = resultText(value.status == STATUS_OK);
+                        });
+                    }, 1000 * timeout);
+                }, 1000 * timeout);
+            } catch {
+                resultElement.innerText = FAIL_RESULT;
+            }
+        });
+    </script>
+</body>
