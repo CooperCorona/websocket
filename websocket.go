@@ -20,10 +20,10 @@ var upgrader = websocket.Upgrader{
 //   w is the ResponseWriter associated with the request.
 //   req is the Request.
 //   onClose is a function to run when the client is disconnected from the Hub.
-func ServeWebsocket(hub *Hub, w http.ResponseWriter, req *http.Request, onClose func(*Hub)) error {
+func ServeWebsocket(hub *Hub, w http.ResponseWriter, req *http.Request, onClose func(*Hub)) (Client, error) {
 	conn, err := upgrader.Upgrade(w, req, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	client := WebsocketClient{hub: hub, conn: conn, send: make(chan ClientEvent, 256)}
 	client.hub.Register(&client, ClientRegistrationOptions{false, onClose})
@@ -32,7 +32,7 @@ func ServeWebsocket(hub *Hub, w http.ResponseWriter, req *http.Request, onClose 
 	// new goroutines.
 	go client.writePump()
 	go client.readPump()
-	return nil
+	return &client, nil
 }
 
 // ServeSocketJs serves a Javascript file containing a Socket class
