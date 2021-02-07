@@ -5,7 +5,7 @@ package websocket
 // one Hub at a time.
 type Client interface {
 	// Send is the channel receiving messages fo this client.
-	Send() chan<- Event
+	Send() chan<- ClientEvent
 
 	// Closes the client. May block unitl the client is closed.
 	Close()

@@ -25,7 +25,7 @@ func ServeWebsocket(hub *Hub, w http.ResponseWriter, req *http.Request, onClose 
 	if err != nil {
 		return err
 	}
-	client := WebsocketClient{hub: hub, conn: conn, send: make(chan Event, 256)}
+	client := WebsocketClient{hub: hub, conn: conn, send: make(chan ClientEvent, 256)}
 	client.hub.Register(&client, ClientRegistrationOptions{false, onClose})
 
 	// Allow collection of memory referenced by the caller by doing all work in

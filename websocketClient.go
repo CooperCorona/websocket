@@ -37,10 +37,10 @@ type WebsocketClient struct {
 	conn *websocket.Conn
 
 	// Buffered channel of outbound messages.
-	send chan Event
+	send chan ClientEvent
 }
 
-func (w *WebsocketClient) Send() chan<- Event {
+func (w *WebsocketClient) Send() chan<- ClientEvent {
 	return w.send
 }
 
@@ -76,7 +76,7 @@ func (w *WebsocketClient) readPump() {
 			log.Printf("error marshalling bytes: %v. Skipping message", err)
 			continue
 		}
-		w.hub.broadcast <- clientMessage{w, event}
+		w.hub.Broadcast(w, event.Name, event.Data)
 	}
 }
 
@@ -93,7 +93,7 @@ func (w *WebsocketClient) writePump() {
 	}()
 	for {
 		select {
-		case event, ok := <-w.send:
+		case clientEvent, ok := <-w.send:
 			w.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
@@ -105,11 +105,11 @@ func (w *WebsocketClient) writePump() {
 			if err != nil {
 				return
 			}
-			message, err := json.Marshal(event)
+			message, err := json.Marshal(clientEvent.Event)
 			if err == nil {
 				writer.Write(message)
 			} else {
-				log.Printf("failed to marshal event: %v. skipping", event)
+				log.Printf("failed to marshal event: %v. skipping", clientEvent.Event)
 			}
 
 			// Add queued chat messages to the current websocket message.

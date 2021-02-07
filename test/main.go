@@ -10,11 +10,11 @@ import (
 )
 
 type CallbackClient struct {
-	send     chan websocket.Event
-	callback func(*CallbackClient, websocket.Event)
+	send     chan websocket.ClientEvent
+	callback func(*CallbackClient, websocket.ClientEvent)
 }
 
-func (c *CallbackClient) Send() chan<- websocket.Event {
+func (c *CallbackClient) Send() chan<- websocket.ClientEvent {
 	return c.send
 }
 
@@ -31,9 +31,9 @@ func (c *CallbackClient) Listen() {
 	}
 }
 
-func NewClient(callback func(*CallbackClient, websocket.Event)) *CallbackClient {
+func NewClient(callback func(*CallbackClient, websocket.ClientEvent)) *CallbackClient {
 	return &CallbackClient{
-		send:     make(chan websocket.Event, 256),
+		send:     make(chan websocket.ClientEvent, 256),
 		callback: callback,
 	}
 }
@@ -113,7 +113,7 @@ func main() {
 		websocket.ServeWebsocket(hub, w, req, func(h *websocket.Hub) {
 			go hub.Close()
 		})
-		client := NewClient(func(c *CallbackClient, event websocket.Event) {
+		client := NewClient(func(c *CallbackClient, event websocket.ClientEvent) {
 			var response struct {
 				Text string `json:"text"`
 			}

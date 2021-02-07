@@ -15,6 +15,14 @@ type Event struct {
 	Data json.RawMessage `json:"data"`
 }
 
+// ClientEvent is an event sent from a specific Client.
+type ClientEvent struct {
+	// Client is the Client which sent the event.
+	Client Client
+	// Event is the event sent by the client.
+	Event Event
+}
+
 // ClientRegistrationOptions configure a Client when registering it with a Hub.
 type ClientRegistrationOptions struct {
 	ReceiveSelfMessages bool
@@ -34,14 +42,6 @@ type clientData struct {
 	onClose func(*Hub)
 }
 
-// A message sent from a specific Client.
-type clientMessage struct {
-	// client is the Client which sent the message.
-	client Client
-	// message is the message sent by the client.
-	event Event
-}
-
 // Hub maintains the set of active clients and broadcasts messages to the
 // clients.
 type Hub struct {
@@ -49,7 +49,7 @@ type Hub struct {
 	clients map[Client]clientData
 
 	// braodcast is the inbound messages from the clients.
-	broadcast chan clientMessage
+	broadcast chan ClientEvent
 
 	// register receives register requests from the clients.
 	register chan clientData
@@ -82,7 +82,7 @@ type Hub struct {
 // NewHub constructs a new hub with empty values.
 func NewHub() *Hub {
 	return &Hub{
-		broadcast:          make(chan clientMessage),
+		broadcast:          make(chan ClientEvent),
 		register:           make(chan clientData),
 		unregister:         make(chan Client),
 		clients:            make(map[Client]clientData),
@@ -96,7 +96,7 @@ func NewHub() *Hub {
 // Broadcast sends a message from a client to all registered clients.
 // Blocks until the message is broadcasted.
 func (h *Hub) Broadcast(client Client, event string, b []byte) {
-	h.broadcast <- clientMessage{client, Event{event, b}}
+	h.broadcast <- ClientEvent{client, Event{event, b}}
 }
 
 // Register registers a client with the given options to receive messages.
@@ -148,16 +148,16 @@ func (h *Hub) Run() {
 			if len(h.clients) == 0 && h.CloseOnNoClients && h.clientsHaveExisted {
 				return
 			}
-		case clientMessage := <-h.broadcast:
+		case clientEvent := <-h.broadcast:
 			h.lastMessageTimestamp = time.Now()
 			for client, clientData := range h.clients {
-				if !clientData.receiveSelfMessages && clientMessage.client == client {
+				if !clientData.receiveSelfMessages && clientEvent.Client == client {
 					// This message was sent by the current client, but the current
 					// client does not receive its own messages. Skip it.
 					continue
 				}
 				select {
-				case client.Send() <- clientMessage.event:
+				case client.Send() <- clientEvent:
 				default:
 					h.closeClient(client, clientData)
 				}
