@@ -38,6 +38,9 @@ type WebsocketClient struct {
 
 	// Buffered channel of outbound messages.
 	send chan ClientEvent
+
+	// The names of events this client should not send.
+	eventsToIgnore map[string]bool
 }
 
 func (w *WebsocketClient) Send() chan<- ClientEvent {
@@ -46,6 +49,14 @@ func (w *WebsocketClient) Send() chan<- ClientEvent {
 
 func (w *WebsocketClient) Close() {
 	close(w.send)
+}
+
+// IgnoreEvents causes w to silently refuse to send any event with the given
+// event names.
+func (w *WebsocketClient) IgnoreEvents(eventNames ...string) {
+	for _, eventName := range eventNames {
+		w.eventsToIgnore[eventName] = true
+	}
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -94,6 +105,9 @@ func (w *WebsocketClient) writePump() {
 	for {
 		select {
 		case clientEvent, ok := <-w.send:
+			if _, ok := w.eventsToIgnore[clientEvent.Event.Name]; ok {
+				break
+			}
 			w.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
@@ -110,19 +124,6 @@ func (w *WebsocketClient) writePump() {
 				writer.Write(message)
 			} else {
 				log.Printf("failed to marshal event: %v. skipping", clientEvent.Event)
-			}
-
-			// Add queued chat messages to the current websocket message.
-			n := len(w.send)
-			for i := 0; i < n; i++ {
-				writer.Write(newline)
-				event := <-w.send
-				message, err := json.Marshal(event)
-				if err != nil {
-					log.Printf("failed to marshal event: %v. skipping", event)
-					continue
-				}
-				writer.Write(message)
 			}
 
 			if err := writer.Close(); err != nil {

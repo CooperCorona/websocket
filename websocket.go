@@ -20,12 +20,12 @@ var upgrader = websocket.Upgrader{
 //   w is the ResponseWriter associated with the request.
 //   req is the Request.
 //   onClose is a function to run when the client is disconnected from the Hub.
-func ServeWebsocket(hub *Hub, w http.ResponseWriter, req *http.Request, onClose func(*Hub)) (Client, error) {
+func ServeWebsocket(hub *Hub, w http.ResponseWriter, req *http.Request, onClose func(*Hub)) (*WebsocketClient, error) {
 	conn, err := upgrader.Upgrade(w, req, nil)
 	if err != nil {
 		return nil, err
 	}
-	client := WebsocketClient{hub: hub, conn: conn, send: make(chan ClientEvent, 256)}
+	client := WebsocketClient{hub: hub, conn: conn, send: make(chan ClientEvent, 256), eventsToIgnore: make(map[string]bool)}
 	client.hub.Register(&client, ClientRegistrationOptions{false, onClose})
 
 	// Allow collection of memory referenced by the caller by doing all work in

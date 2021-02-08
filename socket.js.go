@@ -64,4 +64,3 @@ var socketJsContents = `var Socket = /** @class */ (function () {
     return Socket;
 }());
 `
-
