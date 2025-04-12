@@ -17,8 +17,8 @@ type Event struct {
 
 // ClientEvent is an event sent from a specific Client.
 type ClientEvent struct {
-	// Client is the Client which sent the event. Optional.
-	Client *Client
+	// Client is the Client which sent the event.
+	Client Client
 	// Event is the event sent by the client.
 	Event Event
 }
@@ -95,7 +95,7 @@ func NewHub() *Hub {
 
 // Broadcast sends a message from a client to all registered clients.
 // Blocks until the message is broadcasted.
-func (h *Hub) Broadcast(client *Client, event string, b []byte) {
+func (h *Hub) Broadcast(client Client, event string, b []byte) {
 	h.broadcast <- ClientEvent{client, Event{event, b}}
 }
 
@@ -151,7 +151,7 @@ func (h *Hub) Run() {
 		case clientEvent := <-h.broadcast:
 			h.lastMessageTimestamp = time.Now()
 			for client, clientData := range h.clients {
-				if !clientData.receiveSelfMessages && (clientEvent.Client != nil && *clientEvent.Client == client) {
+				if !clientData.receiveSelfMessages && clientEvent.Client == client {
 					// This message was sent by the current client, but the current
 					// client does not receive its own messages. Skip it.
 					continue
