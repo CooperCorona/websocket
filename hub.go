@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"encoding/json"
+	"sync/atomic"
 	"time"
 )
 
@@ -60,6 +61,11 @@ type Hub struct {
 	// close closes the Hub
 	close chan bool
 
+	// closeFlag is an atomic variable that is used to signal that the Hub is closing.
+	// Hubs deadlock when closed while closing, which is possible if a client's onClose
+	// callback itself closes the Hub.
+	closeFlag int32
+
 	// Closes the hub when no clients are remaining. Does not close the hub
 	// unless there previously was a client (does not close immediately if
 	// no clients have connected yet).
@@ -87,6 +93,7 @@ func NewHub() *Hub {
 		unregister:         make(chan Client),
 		clients:            make(map[Client]clientData),
 		close:              make(chan bool),
+		closeFlag:          0,
 		CloseOnNoClients:   false,
 		clientsHaveExisted: false,
 		CloseTimeout:       time.Minute * 10,
@@ -110,9 +117,14 @@ func (h *Hub) Unregister(client Client) {
 	h.unregister <- client
 }
 
-// Close closes the hub and all registered clients. Blocks until the hub is closed.
+// Close closes the hub and all registered clients. Does **not** block until the hub is closed.
 func (h *Hub) Close() {
-	h.close <- true
+	if atomic.CompareAndSwapInt32(&h.closeFlag, 0, 1) {
+		// Must be called on a separate goroutine, because if this occurs due to
+		// a Close event or an unregister event, this will execute on the Run goroutine,
+		// preventing it from ever unblocking the close event.
+		go func() { h.close <- true }()
+	}
 }
 
 func (h *Hub) closeClient(client Client, data clientData) {
@@ -146,7 +158,9 @@ func (h *Hub) Run() {
 				h.closeClient(client, clientData)
 			}
 			if len(h.clients) == 0 && h.CloseOnNoClients && h.clientsHaveExisted {
-				return
+				// Use Close, which will delay until another loop can read from h.close,
+				// to ensure the atomic closeFlag is always set before closing.
+				h.Close()
 			}
 		case clientEvent := <-h.broadcast:
 			h.lastMessageTimestamp = time.Now()
@@ -163,13 +177,15 @@ func (h *Hub) Run() {
 				}
 			}
 			if len(h.clients) == 0 && h.CloseOnNoClients && h.clientsHaveExisted {
-				return
+				h.Close()
 			}
 		case _ = <-h.close:
+			// This only occurs when Close() has been called, guaranteeing that the
+			// closeFlag is always set before closing.
 			return
 		case _ = <-timeoutTicker.C:
 			if time.Now().Sub(h.lastMessageTimestamp) >= h.CloseTimeout {
-				return
+				h.Close()
 			}
 			timeoutTicker.Stop()
 			timeoutTicker = time.NewTicker(h.CloseTimeout)
