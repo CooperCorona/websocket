@@ -49,6 +49,11 @@ type Hub struct {
 	// clients are the registered clients.
 	clients map[Client]clientData
 
+	// dummyClient is used when broadcasting without a client. Trying to make
+	// clients optional using pointers is a mess because it produces a pointer
+	// to an interface. Better to just use an empty client.
+	dummyClient *emptyClient
+
 	// braodcast is the inbound messages from the clients.
 	broadcast chan ClientEvent
 
@@ -88,6 +93,7 @@ type Hub struct {
 // NewHub constructs a new hub with empty values.
 func NewHub() *Hub {
 	return &Hub{
+		dummyClient:        &emptyClient{make(chan ClientEvent)},
 		broadcast:          make(chan ClientEvent),
 		register:           make(chan clientData),
 		unregister:         make(chan Client),
@@ -104,6 +110,12 @@ func NewHub() *Hub {
 // Blocks until the message is broadcasted.
 func (h *Hub) Broadcast(client Client, event string, b []byte) {
 	h.broadcast <- ClientEvent{client, Event{event, b}}
+}
+
+// Broadcast sends a message from no client to all registered clients.
+// Blocks until the message is broadcasted.
+func (h *Hub) BroadcastAll(event string, b []byte) {
+	h.broadcast <- ClientEvent{h.dummyClient, Event{event, b}}
 }
 
 // Register registers a client with the given options to receive messages.
