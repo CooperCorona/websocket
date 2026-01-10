@@ -10,17 +10,29 @@ import (
 //go:generate tsc --lib dom,es2015 test/socket.ts
 //go:generate go run generate/generate.go
 
-var upgrader = websocket.Upgrader{
+var defaultUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
 
 // ServeWebsocket upgrades an HTTP request to a websocket connection.
-//   hub is the Hub to register the client with.
-//   w is the ResponseWriter associated with the request.
-//   req is the Request.
-//   onClose is a function to run when the client is disconnected from the Hub.
+//
+//	hub is the Hub to register the client with.
+//	w is the ResponseWriter associated with the request.
+//	req is the Request.
+//	onClose is a function to run when the client is disconnected from the Hub.
 func ServeWebsocket(hub *Hub, w http.ResponseWriter, req *http.Request, onClose func(*Hub)) (*WebsocketClient, error) {
+	return ServeWebsocketWithUpgrader(hub, defaultUpgrader, w, req, onClose)
+}
+
+// ServeWebsocket upgrades an HTTP request to a websocket connection using a custom upgrader.
+//
+//		hub is the Hub to register the client with.
+//	 the upgrader to use to register the websocket connection.
+//		w is the ResponseWriter associated with the request.
+//		req is the Request.
+//		onClose is a function to run when the client is disconnected from the Hub.
+func ServeWebsocketWithUpgrader(hub *Hub, upgrader websocket.Upgrader, w http.ResponseWriter, req *http.Request, onClose func(*Hub)) (*WebsocketClient, error) {
 	conn, err := upgrader.Upgrade(w, req, nil)
 	if err != nil {
 		return nil, err
