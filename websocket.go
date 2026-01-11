@@ -27,11 +27,11 @@ func ServeWebsocket(hub *Hub, w http.ResponseWriter, req *http.Request, onClose 
 
 // ServeWebsocket upgrades an HTTP request to a websocket connection using a custom upgrader.
 //
-//		hub is the Hub to register the client with.
-//	 the upgrader to use to register the websocket connection.
-//		w is the ResponseWriter associated with the request.
-//		req is the Request.
-//		onClose is a function to run when the client is disconnected from the Hub.
+//	hub is the Hub to register the client with.
+//	the upgrader to use to register the websocket connection.
+//	w is the ResponseWriter associated with the request.
+//	req is the Request.
+//	onClose is a function to run when the client is disconnected from the Hub.
 func ServeWebsocketWithUpgrader(hub *Hub, upgrader websocket.Upgrader, w http.ResponseWriter, req *http.Request, onClose func(*Hub)) (*WebsocketClient, error) {
 	conn, err := upgrader.Upgrade(w, req, nil)
 	if err != nil {
