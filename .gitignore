@@ -1,2 +1,3 @@
 test/socket.js
 .DS_Store
+_*.js

@@ -6,10 +6,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Generate socket.js.go.
-//go:generate tsc --lib dom,es2015 test/socket.ts
-//go:generate go run generate/generate.go
-
 var defaultUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
@@ -45,12 +41,4 @@ func ServeWebsocketWithUpgrader(hub *Hub, upgrader websocket.Upgrader, w http.Re
 	go client.writePump()
 	go client.readPump()
 	return &client, nil
-}
-
-// ServeSocketJs serves a Javascript file containing a Socket class
-// which abstracts a native WebSocket element. It allows the sending
-// of named events instead of raw strings, conforming to Hub's API.
-func ServeSocketJs(w http.ResponseWriter, req *http.Request) error {
-	_, err := w.Write([]byte(socketJsContents))
-	return err
 }

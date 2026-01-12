@@ -1,5 +1,6 @@
 <html>
-    <script src="/socket.js"></script>
+    <script src="/static/logger.js" type="module"></script>
+    <script src="/static/socket.js" type="module"></script>
     <style>
         .container:nth-child(even) {
             background-color: white;
@@ -63,7 +64,10 @@
             <span id="timeout-change-closed-result">❓</span>
         </div>
     </div>
-    <script type="application/javascript">
+    <script type="module">
+        var exports;
+        import { ConsoleLogger } from '/static/logger.js';
+        import { Socket } from '/static/socket.js';
         const QUESTION_RESULT = "❓";
         const SUCCESS_RESULT = "✅";
         const FAIL_RESULT = "❌";
