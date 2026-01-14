@@ -4,9 +4,23 @@ import (
 	"encoding/json"
 )
 
+// A type-erased event sent to or from a socket.
 type AnyEvent struct {
 	Name string `json:"name"`
 	Data any    `json:"any"`
+}
+
+// SocketEvent represents an event with a known provenance.
+// Socket may be nil, but that represents an event with no
+// source, such as a programatically determined one.
+type SocketEvent struct {
+	Socket Socket
+	Event  AnyEvent
+}
+
+type SocketErrorEvent struct {
+	Socket Socket
+	Err    error
 }
 
 type JSONEvent struct {

@@ -80,7 +80,7 @@ func (w *WebsocketClient) readPump() {
 			}
 			break
 		}
-		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+		message = bytes.TrimSpace(bytes.ReplaceAll(message, newline, space))
 		var event Event
 		err = json.Unmarshal(message, &event)
 		if err != nil {

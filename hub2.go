@@ -3,95 +3,184 @@ package websocket
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/samber/ro"
 )
 
-/*
-	type Hub2 struct {
-		sockets            []Socket
-		broadcast          chan ClientEvent
-		register           chan clientData
-		unregister         chan Client
-		clients            map[Client]clientData
-		close              chan bool
-		closeFlag          int
-		CloseOnNoClients   bool
-		clientsHaveExisted bool
-		CloseTimeout       time.Duration
-	}
+var (
+	ErrSocketAlreadyRegistered = errors.New("socket already registered")
+	ErrSocketNotRegistered     = errors.New("socket not registered")
+)
 
-	func NewHub2() *Hub2 {
-		return &Hub2{
-			sockets:            []Socket{},
-			broadcast:          make(chan ClientEvent),
-			register:           make(chan clientData),
-			unregister:         make(chan Client),
-			clients:            make(map[Client]clientData),
-			close:              make(chan bool),
-			closeFlag:          0,
-			CloseOnNoClients:   false,
-			clientsHaveExisted: false,
-			CloseTimeout:       time.Minute * 10}
+type hubSocketData struct {
+	socket       Socket
+	subscription ro.Subscription
+}
+
+type Hub2 struct {
+	sockets              map[Socket]hubSocketData
+	register             chan Socket
+	unregister           chan Socket
+	close                chan bool
+	closeFlag            int32
+	CloseOnNoClients     bool
+	clientsHaveExisted   bool
+	CloseTimeout         time.Duration
+	subscriptions        []ro.Subscription
+	lastMessageTimestamp time.Time
+	events               ro.Subject[SocketEvent]
+	closedSockets        ro.Subject[Socket]
+	erredSockets         ro.Subject[SocketErrorEvent]
+}
+
+// Creates and begins running a Hub.
+func NewHub2() *Hub2 {
+	hub2 := &Hub2{
+		sockets:              make(map[Socket]hubSocketData),
+		register:             make(chan Socket),
+		unregister:           make(chan Socket),
+		close:                make(chan bool),
+		closeFlag:            0,
+		CloseOnNoClients:     false,
+		clientsHaveExisted:   false,
+		CloseTimeout:         time.Minute * 10,
+		subscriptions:        []ro.Subscription{},
+		lastMessageTimestamp: time.Now(),
+		events:               ro.NewSubject[SocketEvent](),
+		closedSockets:        ro.NewSubject[Socket](),
+		erredSockets:         ro.NewSubject[SocketErrorEvent](),
 	}
+	go hub2.Run()
+	return hub2
+}
 
 // Run listens for register, unregister, broadcast, and close events.
 // Blocks while the hub is running. Run on a separate goroutine
 // if you do not wish to block.
 
-	func (h *Hub2) Run() {
-		defer h.closeAllClients()
-		timeoutTicker := time.NewTicker(h.CloseTimeout)
-		defer timeoutTicker.Stop()
-		for {
-			select {
-			case clientData := <-h.register:
-				h.clients[clientData.client] = clientData
-				h.clientsHaveExisted = true
-			case client := <-h.unregister:
-				if clientData, ok := h.clients[client]; ok {
-					h.closeClient(client, clientData)
-				}
-				if len(h.clients) == 0 && h.CloseOnNoClients && h.clientsHaveExisted {
-					// Use Close, which will delay until another loop can read from h.close,
-					// to ensure the atomic closeFlag is always set before closing.
-					h.Close()
-				}
-			case clientEvent := <-h.broadcast:
-				h.lastMessageTimestamp = time.Now()
-				for client, clientData := range h.clients {
-					if !clientData.receiveSelfMessages && clientEvent.Client == client {
-						// This message was sent by the current client, but the current
-						// client does not receive its own messages. Skip it.
-						continue
-					}
-					select {
-					case client.Send() <- clientEvent:
-					default:
-						h.closeClient(client, clientData)
-					}
-				}
-				if len(h.clients) == 0 && h.CloseOnNoClients && h.clientsHaveExisted {
-					h.Close()
-				}
-			case _ = <-h.close:
-				// This only occurs when Close() has been called, guaranteeing that the
-				// closeFlag is always set before closing.
-				return
-			case _ = <-timeoutTicker.C:
-				if time.Now().Sub(h.lastMessageTimestamp) >= h.CloseTimeout {
-					h.Close()
-				}
-				timeoutTicker.Stop()
-				timeoutTicker = time.NewTicker(h.CloseTimeout)
+func (h *Hub2) Run() {
+	defer h.events.Complete()
+	defer h.closeAllSockets()
+	defer close(h.register)
+	defer close(h.unregister)
+	timeoutTicker := time.NewTicker(h.CloseTimeout)
+	defer timeoutTicker.Stop()
+	for {
+		select {
+		case socket := <-h.register:
+			if _, ok := h.sockets[socket]; ok {
+				h.erredSockets.Next(SocketErrorEvent{socket, ErrSocketAlreadyRegistered})
+				h.emitError(ErrSocketAlreadyRegistered)
+				h.Close()
+				continue
 			}
+			h.clientsHaveExisted = true
+			subscription := socket.Events().Subscribe(ro.NewObserver(
+				func(event AnyEvent) {
+					h.events.Next(SocketEvent{socket, event})
+				},
+				func(err error) {
+					delete(h.sockets, socket)
+					h.erredSockets.Next(SocketErrorEvent{socket, err})
+					h.postRemoveSocketHook()
+				},
+				func() {
+					delete(h.sockets, socket)
+					h.closedSockets.Next(socket)
+					h.postRemoveSocketHook()
+				},
+			))
+			h.sockets[socket] = hubSocketData{socket, subscription}
+		case socket := <-h.unregister:
+			socketData, ok := h.sockets[socket]
+			if ok {
+				h.closeSocket(socketData)
+			} else {
+				h.erredSockets.Next(SocketErrorEvent{socket, ErrSocketNotRegistered})
+				h.emitError(ErrSocketNotRegistered)
+				h.Close()
+				continue
+			}
+			h.postRemoveSocketHook()
+		case _ = <-h.close:
+			// This only occurs when Close() has been called, guaranteeing that the
+			// closeFlag is always set before closing.
+
+			return
+		case _ = <-timeoutTicker.C:
+			if time.Since(h.lastMessageTimestamp) >= h.CloseTimeout {
+				h.Close()
+			}
+			timeoutTicker.Stop()
+			timeoutTicker = time.NewTicker(h.CloseTimeout)
 		}
 	}
-*/
+}
+
+func (h *Hub2) Events() ro.Observable[SocketEvent] {
+	return h.events
+}
+
+func (h *Hub2) ClosedSockets() ro.Observable[Socket] {
+	return h.closedSockets
+}
+
+func (h *Hub2) ErredSockets() ro.Observable[SocketErrorEvent] {
+	return h.erredSockets
+}
+
+// Register registers a client with the given options to receive messages.
+// Blocks until the client is registered.
+func (h *Hub2) Register(socket Socket) {
+	h.register <- socket
+}
+
+// Unregister removes a client. Blocks until the client is unregistered.
+func (h *Hub2) Unregister(socket Socket) {
+	h.unregister <- socket
+}
+
+func (h *Hub2) Close() {
+	if atomic.CompareAndSwapInt32(&h.closeFlag, 0, 1) {
+		// Must be called on a separate goroutine, because if this occurs due to
+		// a Close event or an unregister event, this will execute on the Run goroutine,
+		// preventing it from ever unblocking the close event.
+		go func() { h.close <- true }()
+	}
+}
+
+func (h *Hub2) closeAllSockets() {
+	for _, s := range h.sockets {
+		h.closeSocket(s)
+	}
+}
+
+func (h *Hub2) closeSocket(socket hubSocketData) {
+	delete(h.sockets, socket.socket)
+	socket.socket.Close()
+	socket.subscription.Unsubscribe()
+}
+
+func (h *Hub2) postRemoveSocketHook() {
+	if len(h.sockets) == 0 && h.CloseOnNoClients && h.clientsHaveExisted {
+		// Use Close, which will delay until another loop can read from h.close,
+		// to ensure the atomic closeFlag is always set before closing.
+		h.Close()
+	}
+}
+
+func (h *Hub2) emitError(err error) {
+	h.events.Error(err)
+	h.closedSockets.Error(err)
+	h.erredSockets.Error(err)
+}
+
 type Socket interface {
 	Send(AnyEvent)
 
@@ -170,6 +259,13 @@ func (s *SocketStub) RemoveSubscriber(subscription ro.Subscription) {
 
 func (s *SocketStub) Close() {
 	s.subject.Complete()
+	for subscription, _ := range s.subscribers {
+		subscription.Unsubscribe()
+	}
+}
+
+func (s *SocketStub) CloseWithError(err error) {
+	s.subject.Error(err)
 	for subscription, _ := range s.subscribers {
 		subscription.Unsubscribe()
 	}
@@ -266,6 +362,9 @@ func (w *Websocket) readPump() {
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
 				log.Printf("error: %v", err)
+				w.observable.Error(err)
+			} else {
+				w.observable.Complete()
 			}
 			break
 		}
