@@ -43,15 +43,7 @@ func TestHub2(t *testing.T) {
 	s1 := hub2.Events().Subscribe(ro.OnNext(func(e SocketEvent) {
 		fmt.Printf("Event: %+v\n", e)
 	}))
-	s2 := hub2.ClosedSockets().Subscribe(ro.OnNext(func(s Socket) {
-		fmt.Printf("Closed: %v\n", s)
-	}))
-	s3 := hub2.ErredSockets().Subscribe(ro.OnNext(func(s SocketErrorEvent) {
-		fmt.Printf("Error: %v closed due to %v\n", s.Socket, s.Err)
-	}))
 	defer s1.Unsubscribe()
-	defer s2.Unsubscribe()
-	defer s3.Unsubscribe()
 	defer s4.Unsubscribe()
 	defer s5.Unsubscribe()
 	stub.Post("TestEvent", TestEvent{10})

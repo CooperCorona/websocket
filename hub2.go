@@ -35,8 +35,6 @@ type Hub2 struct {
 	subscriptions        []ro.Subscription
 	lastMessageTimestamp time.Time
 	events               ro.Subject[SocketEvent]
-	closedSockets        ro.Subject[Socket]
-	erredSockets         ro.Subject[SocketErrorEvent]
 }
 
 // Creates and begins running a Hub.
@@ -53,8 +51,6 @@ func NewHub2() *Hub2 {
 		subscriptions:        []ro.Subscription{},
 		lastMessageTimestamp: time.Now(),
 		events:               ro.NewSubject[SocketEvent](),
-		closedSockets:        ro.NewSubject[Socket](),
-		erredSockets:         ro.NewSubject[SocketErrorEvent](),
 	}
 	go hub2.Run()
 	return hub2
@@ -75,7 +71,7 @@ func (h *Hub2) Run() {
 		select {
 		case socket := <-h.register:
 			if _, ok := h.sockets[socket]; ok {
-				h.erredSockets.Next(SocketErrorEvent{socket, ErrSocketAlreadyRegistered})
+				h.events.Next(SocketEvent{SocketErrorEventName, ErrSocketAlreadyRegistered, socket})
 				h.emitError(ErrSocketAlreadyRegistered)
 				h.Close()
 				continue
@@ -83,16 +79,16 @@ func (h *Hub2) Run() {
 			h.clientsHaveExisted = true
 			subscription := socket.Events().Subscribe(ro.NewObserver(
 				func(event AnyEvent) {
-					h.events.Next(SocketEvent{socket, event})
+					h.events.Next(SocketEvent{event.Name, event.Data, socket})
 				},
 				func(err error) {
 					delete(h.sockets, socket)
-					h.erredSockets.Next(SocketErrorEvent{socket, err})
+					h.events.Next(SocketEvent{SocketErrorEventName, err, socket})
 					h.postRemoveSocketHook()
 				},
 				func() {
 					delete(h.sockets, socket)
-					h.closedSockets.Next(socket)
+					h.events.Next(SocketEvent{SocketCloseEventName, nil, socket})
 					h.postRemoveSocketHook()
 				},
 			))
@@ -102,7 +98,7 @@ func (h *Hub2) Run() {
 			if ok {
 				h.closeSocket(socketData)
 			} else {
-				h.erredSockets.Next(SocketErrorEvent{socket, ErrSocketNotRegistered})
+				h.events.Next(SocketEvent{SocketErrorEventName, ErrSocketNotRegistered, socket})
 				h.emitError(ErrSocketNotRegistered)
 				h.Close()
 				continue
@@ -111,7 +107,6 @@ func (h *Hub2) Run() {
 		case _ = <-h.close:
 			// This only occurs when Close() has been called, guaranteeing that the
 			// closeFlag is always set before closing.
-
 			return
 		case _ = <-timeoutTicker.C:
 			if time.Since(h.lastMessageTimestamp) >= h.CloseTimeout {
@@ -125,14 +120,6 @@ func (h *Hub2) Run() {
 
 func (h *Hub2) Events() ro.Observable[SocketEvent] {
 	return h.events
-}
-
-func (h *Hub2) ClosedSockets() ro.Observable[Socket] {
-	return h.closedSockets
-}
-
-func (h *Hub2) ErredSockets() ro.Observable[SocketErrorEvent] {
-	return h.erredSockets
 }
 
 // Register registers a client with the given options to receive messages.
@@ -177,8 +164,6 @@ func (h *Hub2) postRemoveSocketHook() {
 
 func (h *Hub2) emitError(err error) {
 	h.events.Error(err)
-	h.closedSockets.Error(err)
-	h.erredSockets.Error(err)
 }
 
 type Socket interface {
@@ -229,8 +214,7 @@ func Listen[T any](eventName string) func(ro.Observable[AnyEvent]) ro.Observable
 
 // SocketStub is a Socket you can manually send events to.
 type SocketStub struct {
-	subject     ro.Subject[AnyEvent]
-	subscribers map[ro.Subscription]struct{}
+	subject ro.Subject[AnyEvent]
 }
 
 type ConfigurationOptions struct {
@@ -238,7 +222,7 @@ type ConfigurationOptions struct {
 }
 
 func NewStub(options ConfigurationOptions) *SocketStub {
-	return &SocketStub{ro.NewSubject[AnyEvent](), make(map[ro.Subscription]struct{})}
+	return &SocketStub{ro.NewSubject[AnyEvent]()}
 }
 
 func (s *SocketStub) Send(event AnyEvent) {
@@ -249,26 +233,12 @@ func (s *SocketStub) Events() ro.Observable[AnyEvent] {
 	return s.subject
 }
 
-func (s *SocketStub) AddSubscriber(subscription ro.Subscription) {
-	s.subscribers[subscription] = struct{}{}
-}
-
-func (s *SocketStub) RemoveSubscriber(subscription ro.Subscription) {
-	delete(s.subscribers, subscription)
-}
-
 func (s *SocketStub) Close() {
 	s.subject.Complete()
-	for subscription, _ := range s.subscribers {
-		subscription.Unsubscribe()
-	}
 }
 
 func (s *SocketStub) CloseWithError(err error) {
 	s.subject.Error(err)
-	for subscription, _ := range s.subscribers {
-		subscription.Unsubscribe()
-	}
 }
 
 func (s *SocketStub) Post(name string, data any) {
