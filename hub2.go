@@ -20,12 +20,18 @@ var (
 
 type hubSocketData struct {
 	socket       Socket
+	userInfo     UserInfo
 	subscription ro.Subscription
+}
+
+type registerData struct {
+	socket   Socket
+	userInfo UserInfo
 }
 
 type Hub2 struct {
 	sockets              map[Socket]hubSocketData
-	register             chan Socket
+	register             chan registerData
 	unregister           chan Socket
 	close                chan bool
 	closeFlag            int32
@@ -41,7 +47,7 @@ type Hub2 struct {
 func NewHub2() *Hub2 {
 	hub2 := &Hub2{
 		sockets:              make(map[Socket]hubSocketData),
-		register:             make(chan Socket),
+		register:             make(chan registerData),
 		unregister:           make(chan Socket),
 		close:                make(chan bool),
 		closeFlag:            0,
@@ -69,36 +75,38 @@ func (h *Hub2) Run() {
 	defer timeoutTicker.Stop()
 	for {
 		select {
-		case socket := <-h.register:
-			if _, ok := h.sockets[socket]; ok {
-				h.events.Next(SocketEvent{SocketErrorEventName, ErrSocketAlreadyRegistered, socket})
+		case data := <-h.register:
+			if _, ok := h.sockets[data.socket]; ok {
+				h.events.Next(SocketEvent{SocketErrorEventName, ErrSocketAlreadyRegistered, data.socket, data.userInfo})
 				h.emitError(ErrSocketAlreadyRegistered)
 				h.Close()
 				continue
 			}
 			h.clientsHaveExisted = true
-			subscription := socket.Events().Subscribe(ro.NewObserver(
+			socket := data.socket
+			subscription := data.socket.Events().Subscribe(ro.NewObserver(
 				func(event AnyEvent) {
-					h.events.Next(SocketEvent{event.Name, event.Data, socket})
+					h.events.Next(SocketEvent{event.Name, event.Data, data.socket, data.userInfo})
 				},
 				func(err error) {
 					delete(h.sockets, socket)
-					h.events.Next(SocketEvent{SocketErrorEventName, err, socket})
+					h.events.Next(SocketEvent{SocketErrorEventName, err, data.socket, data.userInfo})
 					h.postRemoveSocketHook()
 				},
 				func() {
 					delete(h.sockets, socket)
-					h.events.Next(SocketEvent{SocketCloseEventName, nil, socket})
+					h.events.Next(SocketEvent{SocketCloseEventName, nil, data.socket, data.userInfo})
 					h.postRemoveSocketHook()
 				},
 			))
-			h.sockets[socket] = hubSocketData{socket, subscription}
+			h.sockets[socket] = hubSocketData{socket, data.userInfo, subscription}
+			h.events.Next(SocketEvent{SocketConnectEventName, nil, socket, data.userInfo})
 		case socket := <-h.unregister:
 			socketData, ok := h.sockets[socket]
 			if ok {
 				h.closeSocket(socketData)
 			} else {
-				h.events.Next(SocketEvent{SocketErrorEventName, ErrSocketNotRegistered, socket})
+				h.events.Next(SocketEvent{SocketErrorEventName, ErrSocketNotRegistered, socket, socketData.userInfo})
 				h.emitError(ErrSocketNotRegistered)
 				h.Close()
 				continue
@@ -124,8 +132,8 @@ func (h *Hub2) Events() ro.Observable[SocketEvent] {
 
 // Register registers a client with the given options to receive messages.
 // Blocks until the client is registered.
-func (h *Hub2) Register(socket Socket) {
-	h.register <- socket
+func (h *Hub2) Register(socket Socket, userInfo UserInfo) {
+	h.register <- registerData{socket, userInfo}
 }
 
 // Unregister removes a client. Blocks until the client is unregistered.

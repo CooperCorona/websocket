@@ -37,8 +37,8 @@ func TestHub2(t *testing.T) {
 		fmt.Printf("Hub2 errored: %v\n", err)
 	}))
 	stub2 := NewStub(ConfigurationOptions{})
-	hub2.Register(stub)
-	hub2.Register(stub2)
+	hub2.Register(stub, nil)
+	hub2.Register(stub2, nil)
 	hub2.CloseOnNoClients = true
 	s1 := hub2.Events().Subscribe(ro.OnNext(func(e SocketEvent) {
 		fmt.Printf("Event: %+v\n", e)

@@ -57,7 +57,7 @@ func main() {
 		if err != nil {
 			fmt.Printf("Error upgrading websocket: %v\n", err)
 		}
-		hub.Register(ws)
+		hub.Register(ws, nil)
 	})
 	http.HandleFunc("/websocket_connect_closed", func(w http.ResponseWriter, req *http.Request) {
 		select {
@@ -116,7 +116,7 @@ func main() {
 			fmt.Printf("Error upgrading websocket: %v\n", err)
 			return
 		}
-		hub.Register(ws)
+		hub.Register(ws, nil)
 		ws.Events().Subscribe(ro.OnComplete[websocket.AnyEvent](func() {
 			websocketSendHubClosedChannel <- true
 		}))
@@ -155,7 +155,7 @@ func main() {
 			fmt.Printf("Error upgrading websocket: %v\n", err)
 			return
 		}
-		hub.Register(ws)
+		hub.Register(ws, nil)
 	})
 	http.HandleFunc("/websocket_timeout_closed", func(w http.ResponseWriter, req *http.Request) {
 		select {
