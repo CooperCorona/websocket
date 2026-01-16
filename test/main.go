@@ -17,6 +17,7 @@ type TestEvent struct {
 func main() {
 	var globalWS *websocket.Websocket
 	var globalSub ro.Subscription
+	printObserver := ro.PrintObserver[websocket.SocketEvent]()
 	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		tmpl := template.Must(template.ParseFiles("index.html"))
 		tmpl.Execute(w, nil)
@@ -28,18 +29,6 @@ func main() {
 		http.ServeFile(w, req, "socket.js")
 	})
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("public"))))
-	/*http.HandleFunc("/websocket_connect", func(w http.ResponseWriter, req *http.Request) {
-		ws, err := websocket.UpgradeWebsocket(websocket.DefaultUpgrader, w, req)
-		if err != nil {
-			fmt.Printf("Err in /websocket: %v\n", err)
-			return
-		}
-		globalWS = ws
-		globalSub = ro.Pipe1(ws.Events(), websocket.Listen[TestEvent]("TestEvent")).Subscribe(ro.OnNext(func(x TestEvent) {
-			fmt.Printf("X: %d\n", x.X)
-		}))
-		fmt.Printf("served websocket\n")
-	})*/
 
 	//
 	// CONNECT
@@ -48,11 +37,11 @@ func main() {
 	websocketConnectHubClosedChannel := make(chan bool, 1)
 	websocketConnectHubClosed := false
 	http.HandleFunc("/websocket_connect", func(w http.ResponseWriter, req *http.Request) {
-		hub := websocket.NewHub2()
+		hub := websocket.NewHub()
 		hub.CloseOnNoClients = true
-		go func() {
+		hub.Events().Subscribe(ro.OnComplete[websocket.SocketEvent](func() {
 			websocketConnectHubClosedChannel <- true
-		}()
+		}))
 		ws, err := websocket.UpgradeWebsocket(websocket.DefaultUpgrader, w, req)
 		if err != nil {
 			fmt.Printf("Error upgrading websocket: %v\n", err)
@@ -78,18 +67,16 @@ func main() {
 	websocketCloseHubClosedChannel := make(chan bool, 1)
 	websocketCloseHubClosed := false
 	http.HandleFunc("/websocket_close", func(w http.ResponseWriter, req *http.Request) {
-		//
-		// All the NewHubs need to be NewHub2s
-		// and since that automatically runs them,
-		// they need to subscribe to the close notification.
-		//
 		hub := websocket.NewHub()
 		hub.CloseOnNoClients = true
-		go func() {
-			hub.Run()
+		hub.Events().Subscribe(ro.OnComplete[websocket.SocketEvent](func() {
 			websocketCloseHubClosedChannel <- true
-		}()
-		websocket.ServeWebsocket(hub, w, req, nil)
+		}))
+		ws, err := websocket.UpgradeWebsocket(websocket.DefaultUpgrader, w, req)
+		if err != nil {
+			fmt.Printf("Error upgrading websocket: %v\n", err)
+		}
+		hub.Register(ws, nil)
 	})
 	http.HandleFunc("/websocket_close_closed", func(w http.ResponseWriter, req *http.Request) {
 		select {
@@ -110,21 +97,25 @@ func main() {
 	websocketSendHubClosedChannel := make(chan bool, 1)
 	websocketSendHubClosed := false
 	http.HandleFunc("/websocket_send", func(w http.ResponseWriter, req *http.Request) {
-		hub := websocket.NewHub2()
+		hub := websocket.NewHub()
 		ws, err := websocket.UpgradeWebsocket(websocket.DefaultUpgrader, w, req)
 		if err != nil {
 			fmt.Printf("Error upgrading websocket: %v\n", err)
 			return
 		}
 		hub.Register(ws, nil)
-		ws.Events().Subscribe(ro.OnComplete[websocket.AnyEvent](func() {
+		hub.Events().Subscribe(ro.NewObserver(func(event websocket.SocketEvent) {
+			var data struct {
+				Text string `json:"text"`
+			}
+			data.Text = "responded"
+			ws.Send(websocket.AnyEvent{Name: "response", Data: data})
+		}, func(err error) {
+			fmt.Printf("Error: %v\n", err)
+		}, func() {
 			websocketSendHubClosedChannel <- true
 		}))
-		var data struct {
-			Text string `json:"text"`
-		}
-		data.Text = "responded"
-		ws.Send(websocket.AnyEvent{Name: "response", Data: data})
+		hub.Events().Subscribe(printObserver)
 	})
 	http.HandleFunc("/websocket_send_closed", func(w http.ResponseWriter, req *http.Request) {
 		select {
@@ -145,11 +136,11 @@ func main() {
 	websocketTimeoutHubClosedChannel := make(chan bool, 1)
 	websocketTimeoutHubClosed := false
 	http.HandleFunc("/websocket_timeout", func(w http.ResponseWriter, req *http.Request) {
-		hub := websocket.NewHub2()
+		hub := websocket.NewHub()
 		hub.CloseTimeout = time.Second * 5
-		go func() {
+		hub.Events().Subscribe(ro.OnComplete[websocket.SocketEvent](func() {
 			websocketTimeoutHubClosedChannel <- true
-		}()
+		}))
 		ws, err := websocket.UpgradeWebsocket(websocket.DefaultUpgrader, w, req)
 		if err != nil {
 			fmt.Printf("Error upgrading websocket: %v\n", err)
@@ -178,19 +169,20 @@ func main() {
 	http.HandleFunc("/websocket_timeout_change", func(w http.ResponseWriter, req *http.Request) {
 		hub := websocket.NewHub()
 		hub.CloseTimeout = time.Second * 5
-		go func() {
-			hub.Run()
+		hub.Events().Subscribe(ro.OnComplete[websocket.SocketEvent](func() {
 			websocketTimeoutChangeHubClosedChannel <- true
-		}()
+		}))
 		updateTimeoutTicker := time.NewTicker(time.Second * 2)
 		go func() {
-			select {
-			case _ = <-updateTimeoutTicker.C:
-				hub.CloseTimeout = time.Second * 2
-				updateTimeoutTicker.Stop()
-			}
+			<-updateTimeoutTicker.C
+			hub.CloseTimeout = time.Second * 2
+			updateTimeoutTicker.Stop()
 		}()
-		websocket.ServeWebsocket(hub, w, req, nil)
+		ws, err := websocket.UpgradeWebsocket(websocket.DefaultUpgrader, w, req)
+		if err != nil {
+			fmt.Printf("Error upgrading websocket: %v\n", err)
+		}
+		hub.Register(ws, nil)
 	})
 	http.HandleFunc("/websocket_timeout_change_closed", func(w http.ResponseWriter, req *http.Request) {
 		select {
@@ -210,5 +202,7 @@ func main() {
 	if globalWS != nil {
 		globalWS.Close()
 	}
-	globalSub.Unsubscribe()
+	if globalSub != nil {
+		globalSub.Unsubscribe()
+	}
 }

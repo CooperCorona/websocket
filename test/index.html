@@ -16,6 +16,10 @@
             min-width: 256px;
             display: inline-block;
         }
+        .textarea {
+            min-width: 512px;
+            min-height: 512px;
+        }
     </style>
 </html>
 <body>
@@ -64,6 +68,14 @@
             <span id="timeout-change-closed-result">❓</span>
         </div>
     </div>
+    <div class="container">
+        <div class="left">
+            <label for="event-textarea">Events</label>
+        </div>
+        <div class="right">
+            <textarea class="textarea" id="event-textarea" name="event-textarea" disabled></textarea>
+        </div>
+    </div>
     <script type="module">
         var exports;
         import { ConsoleLogger } from '/static/logger.js';
@@ -76,7 +88,7 @@
         const CLOSE_CODE = 1000;
         const STATUS_OK = 200;
         const resultText = function(result) { return result ? SUCCESS_RESULT : FAIL_RESULT; }
-        
+        let eventText = "";
         //
         // CONNECT
         // 
@@ -90,7 +102,7 @@
                     fetch(BASE_URL + "websocket_connect_closed").then((value) => {
                         closedResultElement.innerText = resultText(value.status == STATUS_OK);
                     });
-                    s.close(CLOSE_CODE);
+                    s.close(CLOSE_CODE, "just because");
                 });
             } catch {
                 resultElement.innerText = FAIL_RESULT;
@@ -110,7 +122,9 @@
                 });
                 s.onEvent("response", (socket, event) => {
                     resultElement.innerText = resultText(event.text == "responded");
-                    s.close(CLOSE_CODE);
+                    eventText += event.text + "\n";
+                    document.getElementById("event-textarea").innerText = eventText;
+                    s.close(CLOSE_CODE, "just because");
                     fetch(BASE_URL + "websocket_send_closed").then((value) => {
                         closedResultElement.innerText = resultText(value.status == STATUS_OK);
                     });

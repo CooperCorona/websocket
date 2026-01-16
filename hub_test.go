@@ -27,20 +27,20 @@ func TestCooper(t *testing.T) {
 	subscription.Wait()
 }
 
-func TestHub2(t *testing.T) {
-	hub2 := NewHub2()
+func TestHub(t *testing.T) {
+	hub := NewHub()
 	stub := NewStub(ConfigurationOptions{})
-	s4 := hub2.Events().Subscribe(ro.OnComplete[SocketEvent](func() {
-		fmt.Printf("Hub2 completed\n")
+	s4 := hub.Events().Subscribe(ro.OnComplete[SocketEvent](func() {
+		fmt.Printf("Hub completed\n")
 	}))
-	s5 := hub2.Events().Subscribe(ro.OnError[SocketEvent](func(err error) {
-		fmt.Printf("Hub2 errored: %v\n", err)
+	s5 := hub.Events().Subscribe(ro.OnError[SocketEvent](func(err error) {
+		fmt.Printf("Hub errored: %v\n", err)
 	}))
 	stub2 := NewStub(ConfigurationOptions{})
-	hub2.Register(stub, nil)
-	hub2.Register(stub2, nil)
-	hub2.CloseOnNoClients = true
-	s1 := hub2.Events().Subscribe(ro.OnNext(func(e SocketEvent) {
+	hub.Register(stub, nil)
+	hub.Register(stub2, nil)
+	hub.CloseOnNoClients = true
+	s1 := hub.Events().Subscribe(ro.OnNext(func(e SocketEvent) {
 		fmt.Printf("Event: %+v\n", e)
 	}))
 	defer s1.Unsubscribe()
