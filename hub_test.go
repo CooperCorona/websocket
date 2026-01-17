@@ -15,7 +15,7 @@ type TestEvent struct {
 
 func TestCooper(t *testing.T) {
 	socket := NewStub(ConfigurationOptions{BufferSize: DefaultBufferSize})
-	subscription := ro.Pipe1(socket.Events(), Listen[TestEvent]("XEvent")).Subscribe(ro.OnNext(func(e TestEvent) {
+	subscription := ro.Pipe1(socket.Events(), Listen[TestEvent]("XEvent")).Subscribe(ro.OnNext(func(e SocketEvent[TestEvent]) {
 		fmt.Printf("TestEvent: %+v\n", e)
 	}))
 	defer subscription.Unsubscribe()
@@ -28,7 +28,7 @@ func TestCooper(t *testing.T) {
 }
 
 func TestHub(t *testing.T) {
-	hub := NewHub()
+	hub := NewAnyHub()
 	stub := NewStub(ConfigurationOptions{})
 	s4 := hub.Events().Subscribe(ro.OnComplete[AnySocketEvent](func() {
 		fmt.Printf("Hub completed\n")
@@ -37,8 +37,8 @@ func TestHub(t *testing.T) {
 		fmt.Printf("Hub errored: %v\n", err)
 	}))
 	stub2 := NewStub(ConfigurationOptions{})
-	hub.Register(stub, nil)
-	hub.Register(stub2, nil)
+	hub.Register(stub)
+	hub.Register(stub2)
 	hub.CloseOnNoClients = true
 	s1 := hub.Events().Subscribe(ro.OnNext(func(e AnySocketEvent) {
 		fmt.Printf("Event: %+v\n", e)

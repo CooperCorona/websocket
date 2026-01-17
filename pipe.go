@@ -10,15 +10,15 @@ import (
 // abstract broadcasting. But we can dispense with the channel and just use a Subject[AnyEvent].
 // Then use this custom function to filter for event names and get the strongly typed version
 // in response.
-func Listen[T any](eventName string) func(ro.Observable[AnyEvent]) ro.Observable[T] {
-	return func(input ro.Observable[AnyEvent]) ro.Observable[T] {
+/*func Listen[T any](eventName string) func(ro.Observable[AnySocketEvent]) ro.Observable[SocketEvent[T]] {
+	return func(input ro.Observable[AnySocketEvent]) ro.Observable[SocketEvent[T]] {
 		return ro.Pipe3(input,
-			ro.Map(func(e AnyEvent) *T {
+			ro.Map(func(e AnySocketEvent) *T {
 				if e.Name != eventName {
 					return nil
 				}
 				if t, ok := e.Data.(T); ok {
-					return &t
+					return &SocketEven
 				} else if j, ok := e.Data.(json.RawMessage); ok {
 					var d T
 					err := json.Unmarshal(j, &d)
@@ -41,13 +41,9 @@ func Listen[T any](eventName string) func(ro.Observable[AnyEvent]) ro.Observable
 			}),
 		)
 	}
-}
+}*/
 
-// we still need a Socket to represent input AND output. Maybe we will want a Hub to
-// abstract broadcasting. But we can dispense with the channel and just use a Subject[AnyEvent].
-// Then use this custom function to filter for event names and get the strongly typed version
-// in response.
-func ListenSocket[T any](eventName string) func(ro.Observable[AnySocketEvent]) ro.Observable[SocketEvent[T]] {
+func Listen[T any](eventName string) func(ro.Observable[AnySocketEvent]) ro.Observable[SocketEvent[T]] {
 	return func(input ro.Observable[AnySocketEvent]) ro.Observable[SocketEvent[T]] {
 		return ro.Pipe3(input,
 			ro.Map(func(e AnySocketEvent) *SocketEvent[T] {
@@ -56,10 +52,9 @@ func ListenSocket[T any](eventName string) func(ro.Observable[AnySocketEvent]) r
 				}
 				if t, ok := e.Data.(T); ok {
 					return &SocketEvent[T]{
-						Name:     e.Name,
-						Data:     t,
-						Socket:   e.Socket,
-						UserInfo: e.UserInfo,
+						Name:   e.Name,
+						Data:   t,
+						Socket: e.Socket,
 					}
 				} else if j, ok := e.Data.(json.RawMessage); ok {
 					var d T
@@ -68,10 +63,9 @@ func ListenSocket[T any](eventName string) func(ro.Observable[AnySocketEvent]) r
 						return nil
 					}
 					return &SocketEvent[T]{
-						Name:     e.Name,
-						Data:     d,
-						Socket:   e.Socket,
-						UserInfo: e.UserInfo,
+						Name:   e.Name,
+						Data:   d,
+						Socket: e.Socket,
 					}
 				} else {
 					// must be some other type. No way to know if the type was intentional or not,
@@ -90,8 +84,8 @@ func ListenSocket[T any](eventName string) func(ro.Observable[AnySocketEvent]) r
 	}
 }
 
-func Publish[T any](name string, observable ro.Observable[AnyEvent], output Socket) ro.Subscription {
-	return ro.Pipe1(observable, Listen[T](name)).Subscribe(ro.OnNext(func(t T) {
-		output.Send()
-	}))
-}
+// func Publish[T any](name string, observable ro.Observable[AnyEvent], output Socket) ro.Subscription {
+// 	return ro.Pipe1(observable, Listen[T](name)).Subscribe(ro.OnNext(func(t T) {
+// 		output.Send()
+// 	}))
+// }

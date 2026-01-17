@@ -7,7 +7,7 @@ import (
 type Socket interface {
 	Send(AnyEvent)
 
-	Events() ro.Observable[AnyEvent]
+	Events() ro.Observable[AnySocketEvent]
 
 	// Closes the client. May block until the client is closed.
 	Close()
@@ -15,7 +15,7 @@ type Socket interface {
 
 // SocketStub is a Socket you can manually send events to.
 type SocketStub struct {
-	subject ro.Subject[AnyEvent]
+	subject ro.Subject[AnySocketEvent]
 }
 
 type ConfigurationOptions struct {
@@ -23,14 +23,14 @@ type ConfigurationOptions struct {
 }
 
 func NewStub(options ConfigurationOptions) *SocketStub {
-	return &SocketStub{ro.NewSubject[AnyEvent]()}
+	return &SocketStub{ro.NewSubject[AnySocketEvent]()}
 }
 
 func (s *SocketStub) Send(event AnyEvent) {
-	s.subject.Next(event)
+	s.subject.Next(AnySocketEvent{Name: event.Name, Data: event.Data, Socket: s})
 }
 
-func (s *SocketStub) Events() ro.Observable[AnyEvent] {
+func (s *SocketStub) Events() ro.Observable[AnySocketEvent] {
 	return s.subject
 }
 

@@ -6,8 +6,6 @@ const (
 	SocketErrorEventName   = "SocketErrorEventName"
 )
 
-type UserInfo = map[string]any
-
 // A type-erased event sent to or from a socket.
 type AnyEvent struct {
 	Name string `json:"name"`
@@ -21,8 +19,6 @@ type AnySocketEvent struct {
 	Name   string
 	Data   any
 	Socket Socket
-	// Arbitrary data stored alongside the socket.
-	UserInfo UserInfo
 }
 
 // SocketEvent is a parameterized event with a known provenance.
@@ -32,6 +28,4 @@ type SocketEvent[T any] struct {
 	Name   string
 	Data   T
 	Socket Socket
-	// Arbitrary data stored alongside the socket.
-	UserInfo UserInfo
 }
