@@ -14,12 +14,23 @@ type AnyEvent struct {
 	Data any    `json:"data"`
 }
 
-// SocketEvent represents an event with a known provenance.
+// AnySocketEvent represents a type-erased event with a known provenance.
 // Socket may be nil, but that represents an event with no
 // source, such as a programatically determined one.
-type SocketEvent struct {
+type AnySocketEvent struct {
 	Name   string
 	Data   any
+	Socket Socket
+	// Arbitrary data stored alongside the socket.
+	UserInfo UserInfo
+}
+
+// SocketEvent is a parameterized event with a known provenance.
+// Socket may be nil, but that represents an event with no
+// source, such as a programatically determined one.
+type SocketEvent[T any] struct {
+	Name   string
+	Data   T
 	Socket Socket
 	// Arbitrary data stored alongside the socket.
 	UserInfo UserInfo

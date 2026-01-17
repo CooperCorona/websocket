@@ -35,12 +35,13 @@ type Hub struct {
 	CloseTimeout         time.Duration
 	subscriptions        []ro.Subscription
 	lastMessageTimestamp time.Time
-	events               ro.Subject[SocketEvent]
+	events               ro.Subject[AnySocketEvent]
+	hubSubscription      ro.Subscription // hubSubscription is a parent subscription for all sockets attached to this hub, for easy closing.
 }
 
-// Creates and begins running a Hub.
+// Creates and runs a Hub.
 func NewHub() *Hub {
-	Hub := &Hub{
+	hub := &Hub{
 		sockets:              make(map[Socket]hubSocketData),
 		register:             make(chan registerData),
 		unregister:           make(chan Socket),
@@ -51,10 +52,11 @@ func NewHub() *Hub {
 		CloseTimeout:         time.Minute * 10,
 		subscriptions:        []ro.Subscription{},
 		lastMessageTimestamp: time.Now(),
-		events:               ro.NewSubject[SocketEvent](),
+		events:               ro.NewSubject[AnySocketEvent](),
+		hubSubscription:      ro.NewSubscription(nil),
 	}
-	go Hub.Run()
-	return Hub
+	go hub.Run()
+	return hub
 }
 
 // Run listens for register, unregister, broadcast, and close events.
@@ -62,17 +64,17 @@ func NewHub() *Hub {
 // if you do not wish to block.
 
 func (h *Hub) Run() {
+	defer h.closeHub()
 	defer h.events.Complete()
-	defer h.closeAllSockets()
-	defer close(h.register)
 	defer close(h.unregister)
+	defer close(h.register)
 	timeoutTicker := time.NewTicker(h.CloseTimeout)
 	defer timeoutTicker.Stop()
 	for {
 		select {
 		case data := <-h.register:
 			if _, ok := h.sockets[data.socket]; ok {
-				h.events.Next(SocketEvent{SocketErrorEventName, ErrSocketAlreadyRegistered, data.socket, data.userInfo})
+				h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketAlreadyRegistered, data.socket, data.userInfo})
 				h.emitError(ErrSocketAlreadyRegistered)
 				h.Close()
 				continue
@@ -81,27 +83,28 @@ func (h *Hub) Run() {
 			socket := data.socket
 			subscription := data.socket.Events().Subscribe(ro.NewObserver(
 				func(event AnyEvent) {
-					h.events.Next(SocketEvent{event.Name, event.Data, data.socket, data.userInfo})
+					h.events.Next(AnySocketEvent{event.Name, event.Data, data.socket, data.userInfo})
 				},
 				func(err error) {
 					delete(h.sockets, socket)
-					h.events.Next(SocketEvent{SocketErrorEventName, err, data.socket, data.userInfo})
+					h.events.Next(AnySocketEvent{SocketErrorEventName, err, data.socket, data.userInfo})
 					h.postRemoveSocketHook()
 				},
 				func() {
 					delete(h.sockets, socket)
-					h.events.Next(SocketEvent{SocketCloseEventName, nil, data.socket, data.userInfo})
+					h.events.Next(AnySocketEvent{SocketCloseEventName, nil, data.socket, data.userInfo})
 					h.postRemoveSocketHook()
 				},
 			))
+			h.hubSubscription.AddUnsubscribable(subscription)
 			h.sockets[socket] = hubSocketData{socket, data.userInfo, subscription}
-			h.events.Next(SocketEvent{SocketConnectEventName, nil, socket, data.userInfo})
+			h.events.Next(AnySocketEvent{SocketConnectEventName, nil, socket, data.userInfo})
 		case socket := <-h.unregister:
 			socketData, ok := h.sockets[socket]
 			if ok {
 				h.closeSocket(socketData)
 			} else {
-				h.events.Next(SocketEvent{SocketErrorEventName, ErrSocketNotRegistered, socket, socketData.userInfo})
+				h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketNotRegistered, socket, socketData.userInfo})
 				h.emitError(ErrSocketNotRegistered)
 				h.Close()
 				continue
@@ -110,6 +113,8 @@ func (h *Hub) Run() {
 		case _ = <-h.close:
 			// This only occurs when Close() has been called, guaranteeing that the
 			// closeFlag is always set before closing.
+			//
+			// the defer call ensures all sockets get closed.
 			return
 		case _ = <-timeoutTicker.C:
 			if time.Since(h.lastMessageTimestamp) >= h.CloseTimeout {
@@ -121,7 +126,7 @@ func (h *Hub) Run() {
 	}
 }
 
-func (h *Hub) Events() ro.Observable[SocketEvent] {
+func (h *Hub) Events() ro.Observable[AnySocketEvent] {
 	return h.events
 }
 
@@ -145,6 +150,11 @@ func (h *Hub) Close() {
 	}
 }
 
+func (h *Hub) closeHub() {
+	h.closeAllSockets()
+	h.hubSubscription.Unsubscribe()
+}
+
 func (h *Hub) closeAllSockets() {
 	for _, s := range h.sockets {
 		h.closeSocket(s)
@@ -154,7 +164,7 @@ func (h *Hub) closeAllSockets() {
 func (h *Hub) closeSocket(socket hubSocketData) {
 	delete(h.sockets, socket.socket)
 	socket.socket.Close()
-	socket.subscription.Unsubscribe()
+	// no need to unsubscribe because hubSubscription owns all unsubscribing.
 }
 
 func (h *Hub) postRemoveSocketHook() {
