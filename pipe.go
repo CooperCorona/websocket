@@ -1,8 +1,6 @@
 package websocket
 
 import (
-	"encoding/json"
-
 	"github.com/samber/ro"
 )
 
@@ -53,6 +51,10 @@ func WithID[T Identifiable](id string) func(T) bool {
 	}
 }
 
+func ListenAny(eventName string) func(ro.Observable[AnySocketEvent]) ro.Observable[AnySocketEvent] {
+	return ro.Filter(func(e AnySocketEvent) bool { return e.Name == eventName })
+}
+
 func Listen[T any](eventName string) func(ro.Observable[AnySocketEvent]) ro.Observable[SocketEvent[T]] {
 	return func(input ro.Observable[AnySocketEvent]) ro.Observable[SocketEvent[T]] {
 		return ro.Pipe3(input,
@@ -60,28 +62,11 @@ func Listen[T any](eventName string) func(ro.Observable[AnySocketEvent]) ro.Obse
 				if e.Name != eventName {
 					return nil
 				}
-				if t, ok := e.Data.(T); ok {
-					return &SocketEvent[T]{
-						Name:   e.Name,
-						Data:   t,
-						Socket: e.Socket,
-					}
-				} else if j, ok := e.Data.(json.RawMessage); ok {
-					var d T
-					err := json.Unmarshal(j, &d)
-					if err != nil {
-						return nil
-					}
-					return &SocketEvent[T]{
-						Name:   e.Name,
-						Data:   d,
-						Socket: e.Socket,
-					}
-				} else {
-					// must be some other type. No way to know if the type was intentional or not,
-					// so we return nil and stop processing.
+				socketEvent, err := Cast[T](e)
+				if err != nil {
 					return nil
 				}
+				return &socketEvent
 			}),
 			ro.Filter(func(t *SocketEvent[T]) bool {
 				return t != nil

@@ -1,10 +1,23 @@
 package websocket
 
+import (
+	"encoding/json"
+	"errors"
+)
+
 const (
 	SocketConnectEventName = "SocketConnectEvent"
 	SocketCloseEventName   = "SocketCloseEventName"
 	SocketErrorEventName   = "SocketErrorEventName"
 )
+
+var (
+	ErrCannotCastType = errors.New("data property of AnySocketEvent is not the given type. cannot cast.")
+)
+
+func AlwaysTrue[T any]() func(T) bool {
+	return func(t T) bool { return true }
+}
 
 // A type-erased event sent to or from a socket.
 type AnyEvent struct {
@@ -28,4 +41,50 @@ type SocketEvent[T any] struct {
 	Name   string
 	Data   T
 	Socket Socket
+}
+
+type SubscriptionOptions struct {
+	EventName           string
+	Filter              func(any) bool
+	ReceiveSelfMessages bool
+}
+
+func NewSubscriptionsForEvents(eventNames ...string) []SubscriptionOptions {
+	subscriptions := make([]SubscriptionOptions, len(eventNames))
+	for i, eventName := range eventNames {
+		subscriptions[i] = SubscriptionOptions{EventName: eventName, Filter: AlwaysTrue[any]()}
+	}
+	return subscriptions
+}
+
+func Cast[T any](e AnySocketEvent) (SocketEvent[T], error) {
+	if t, ok := e.Data.(T); ok {
+		return SocketEvent[T]{
+			Name:   e.Name,
+			Data:   t,
+			Socket: e.Socket,
+		}, nil
+	} else if j, ok := e.Data.(json.RawMessage); ok {
+		var d T
+		err := json.Unmarshal(j, &d)
+		if err != nil {
+			return SocketEvent[T]{}, err
+		}
+		return SocketEvent[T]{
+			Name:   e.Name,
+			Data:   d,
+			Socket: e.Socket,
+		}, nil
+	} else {
+		return SocketEvent[T]{}, ErrCannotCastType
+	}
+}
+
+func IfCast[T any](a AnySocketEvent, callback func(T) bool) bool {
+	event, err := Cast[T](a)
+	if err != nil {
+		// couldn't cast
+		return false
+	}
+	return callback(event.Data)
 }

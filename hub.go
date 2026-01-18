@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -15,21 +16,32 @@ var (
 )
 
 type hubSocketData[T any] struct {
-	socket       Socket
-	subscription ro.Subscription
-	userInfo     T
+	socket   Socket
+	userInfo T
+}
+
+type HubRegistrationOptions struct {
+	Subscriptions []SubscriptionOptions // Subscriptions are the subscriptions to _other events from sockets in the Hub. Events originating outside the hub using publish are unaffected. It is the responsibility of the publisher to decide what messages go where.
+}
+
+func NewRegistrationOptionsForEvents(eventNames ...string) HubRegistrationOptions {
+	return HubRegistrationOptions{Subscriptions: NewSubscriptionsForEvents(eventNames...)}
+}
+
+type hubRegistrationData struct {
+	socket  Socket
+	options HubRegistrationOptions
 }
 
 type Hub[T any] struct {
 	sockets              map[Socket]hubSocketData[T]
-	register             chan Socket
+	register             chan hubRegistrationData
 	unregister           chan Socket
 	close                chan bool
 	closeFlag            int32
 	CloseOnNoClients     bool
 	clientsHaveExisted   bool
 	CloseTimeout         time.Duration
-	subscriptions        []ro.Subscription
 	lastMessageTimestamp time.Time
 	events               ro.Subject[AnySocketEvent]
 	hubSubscription      ro.Subscription // hubSubscription is a parent subscription for all sockets attached to this hub, for easy closing.
@@ -39,14 +51,13 @@ type Hub[T any] struct {
 func NewHub[T any]() *Hub[T] {
 	hub := &Hub[T]{
 		sockets:              make(map[Socket]hubSocketData[T]),
-		register:             make(chan Socket),
+		register:             make(chan hubRegistrationData),
 		unregister:           make(chan Socket),
 		close:                make(chan bool),
 		closeFlag:            0,
 		CloseOnNoClients:     false,
 		clientsHaveExisted:   false,
 		CloseTimeout:         time.Minute * 10,
-		subscriptions:        []ro.Subscription{},
 		lastMessageTimestamp: time.Now(),
 		events:               ro.NewSubject[AnySocketEvent](),
 		hubSubscription:      ro.NewSubscription(nil),
@@ -74,7 +85,8 @@ func (h *Hub[T]) Run() {
 	defer timeoutTicker.Stop()
 	for {
 		select {
-		case socket := <-h.register:
+		case data := <-h.register:
+			socket := data.socket
 			if _, ok := h.sockets[socket]; ok {
 				h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketAlreadyRegistered, socket})
 				h.emitError(ErrSocketAlreadyRegistered)
@@ -98,8 +110,12 @@ func (h *Hub[T]) Run() {
 				},
 			))
 			h.hubSubscription.AddUnsubscribable(subscription)
-			h.sockets[socket] = hubSocketData[T]{socket: socket, subscription: subscription}
+			h.sockets[socket] = hubSocketData[T]{socket: socket}
+			for _, option := range data.options.Subscriptions {
+				h.subscribeSocket(socket, option)
+			}
 			h.events.Next(AnySocketEvent{SocketConnectEventName, nil, socket})
+			fmt.Printf("Registered socket\n")
 		case socket := <-h.unregister:
 			socketData, ok := h.sockets[socket]
 			if ok {
@@ -131,6 +147,9 @@ func (h *Hub[T]) Events() ro.Observable[AnySocketEvent] {
 	return h.events
 }
 
+// Publish sends a message to all sockets whose user info satisfies a condition.
+// Publish is the main entry point for non-sockets to send events to registered sockets.
+// For sockets to communicate with sockets, add SubscriptionOptions when registering.
 func (h *Hub[T]) Publish(condition func(T) bool, eventName string, data any) {
 	for socket, hubData := range h.sockets {
 		if condition(hubData.userInfo) {
@@ -139,10 +158,22 @@ func (h *Hub[T]) Publish(condition func(T) bool, eventName string, data any) {
 	}
 }
 
-// Register registers a client with the given options to receive messages.
+// Broadcasts publishes a message to all sockets unconditionally.
+func (h *Hub[T]) Broadcast(eventName string, data any) {
+	h.Publish(AlwaysTrue[T](), eventName, data)
+}
+
+// Register registers a client to receive messages.
 // Blocks until the client is registered.
 func (h *Hub[T]) Register(socket Socket) {
-	h.register <- socket
+	h.RegisterWithOptions(socket, HubRegistrationOptions{})
+}
+
+// Register registers a client with the given options to receive messages.
+// Blocks until the client is registered.
+func (h *Hub[T]) RegisterWithOptions(socket Socket, options HubRegistrationOptions) {
+	h.register <- hubRegistrationData{socket, options}
+	fmt.Printf("Register unblocked\n")
 }
 
 // Unregister removes a client. Blocks until the client is unregistered.
@@ -200,6 +231,27 @@ func (h *Hub[T]) postRemoveSocketHook() {
 		// to ensure the atomic closeFlag is always set before closing.
 		h.Close()
 	}
+}
+
+// this doesn't work, because I'm manually sending events in Publish, not
+// using an observable. Furthermore, where is the callback?
+// Maybe stub needs to be able to attach its own callback to individual events.
+// After all, a Websocket doesn't have callbacks. "Send" is a method in the interface,
+// not something that needs to be abstract. It's already abstract by definition of
+// the interface. The stub needs to be abstract to support stubbing.
+func (h *Hub[T]) subscribeSocket(socket Socket, options SubscriptionOptions) {
+	sub := ro.Pipe3(h.Events(),
+		ro.Filter(func(e AnySocketEvent) bool {
+			return e.Socket != socket || options.ReceiveSelfMessages
+		}),
+		ListenAny(options.EventName),
+		ro.Filter(func(e AnySocketEvent) bool {
+			return options.Filter(e.Data)
+		}),
+	).Subscribe(ro.OnNext(func(e AnySocketEvent) {
+		socket.Send(e)
+	}))
+	h.hubSubscription.AddUnsubscribable(sub)
 }
 
 func (h *Hub[T]) emitError(err error) {

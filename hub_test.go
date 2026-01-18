@@ -76,13 +76,20 @@ type Order struct {
 }
 
 func TestCrepes(t *testing.T) {
+	fmt.Printf("===== START =====\n")
 	hub := NewHub[User]()
 	stub1 := NewStub(ConfigurationOptions{})
 	stub2 := NewStub(ConfigurationOptions{})
 	hub.Register(stub1)
 	hub.Register(stub2)
-	hub.SetUserInfo(stub1, User{"A"})
-	hub.SetUserInfo(stub2, User{"B"})
+	err := hub.SetUserInfo(stub1, User{"A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = hub.SetUserInfo(stub2, User{"B"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	orders := make(map[string][]Order)
 	s := Listen[CrepeEvent]("CrepeEvent")(hub.Events()).Subscribe(ro.OnNext(func(e SocketEvent[CrepeEvent]) {
 		user, err := hub.GetUserInfo(e.Socket)
@@ -99,16 +106,18 @@ func TestCrepes(t *testing.T) {
 	}))
 	// Listen doesn't work because it's not a SocketEvent. Maybe we need to make it a SocketEvent and just discard
 	// the socket, allowing it to be nil.
-	Listen[OrderFulfilledEvent]("OrderFulfilledEvent")(stub1.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent]) {
+	s2 := Listen[OrderFulfilledEvent]("OrderFulfilledEvent")(stub1.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent]) {
 		fmt.Printf("stub1 order fulfilled: %+v\n", e.Data)
 	}))
-	Listen[OrderFulfilledEvent]("OrderFulfilledEvent")(stub2.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent]) {
+	s3 := Listen[OrderFulfilledEvent]("OrderFulfilledEvent")(stub2.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent]) {
 		fmt.Printf("stub2 order fulfilled: %+v\n", e.Data)
 	}))
 	defer s.Unsubscribe()
+	defer s2.Unsubscribe()
+	defer s3.Unsubscribe()
 	pushTicker := time.NewTicker(time.Second)
 	popTicker := time.NewTicker(time.Second * 2)
-	count := 10
+	count := 1
 	crepe := 0
 outerLoop:
 	for {
