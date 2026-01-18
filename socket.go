@@ -5,7 +5,7 @@ import (
 )
 
 type Socket interface {
-	Send(AnyEvent)
+	Send(AnySocketEvent)
 
 	Events() ro.Observable[AnySocketEvent]
 
@@ -15,7 +15,8 @@ type Socket interface {
 
 // SocketStub is a Socket you can manually send events to.
 type SocketStub struct {
-	subject ro.Subject[AnySocketEvent]
+	subject    ro.Subject[AnySocketEvent]
+	sentEvents ro.Subject[AnySocketEvent]
 }
 
 type ConfigurationOptions struct {
@@ -23,15 +24,19 @@ type ConfigurationOptions struct {
 }
 
 func NewStub(options ConfigurationOptions) *SocketStub {
-	return &SocketStub{ro.NewSubject[AnySocketEvent]()}
+	return &SocketStub{ro.NewSubject[AnySocketEvent](), ro.NewSubject[AnySocketEvent]()}
 }
 
-func (s *SocketStub) Send(event AnyEvent) {
-	s.subject.Next(AnySocketEvent{Name: event.Name, Data: event.Data, Socket: s})
+func (s *SocketStub) Send(event AnySocketEvent) {
+	s.sentEvents.Next(event)
 }
 
 func (s *SocketStub) Events() ro.Observable[AnySocketEvent] {
 	return s.subject
+}
+
+func (s *SocketStub) SentEvents() ro.Observable[AnySocketEvent] {
+	return s.sentEvents
 }
 
 func (s *SocketStub) Close() {
@@ -43,5 +48,5 @@ func (s *SocketStub) CloseWithError(err error) {
 }
 
 func (s *SocketStub) Post(name string, data any) {
-	s.Send(AnyEvent{name, data})
+	s.subject.Next(AnySocketEvent{name, data, s})
 }

@@ -38,15 +38,15 @@ type Websocket struct {
 	// The websocket connection.
 	conn *websocket.Conn
 
-	send chan AnyEvent
+	send chan AnySocketEvent
 
 	// observable is an observable wrapping emit.
-	observable ro.Subject[AnyEvent]
+	observable ro.Subject[AnySocketEvent]
 }
 
 func NewWebsocket(conn *websocket.Conn, options ConfigurationOptions) Websocket {
-	send := make(chan AnyEvent, options.BufferSize)
-	observable := ro.NewSubject[AnyEvent]()
+	send := make(chan AnySocketEvent, options.BufferSize)
+	observable := ro.NewSubject[AnySocketEvent]()
 	return Websocket{conn, send, observable}
 }
 
@@ -69,11 +69,11 @@ func UpgradeWebsocket(upgrader websocket.Upgrader, w http.ResponseWriter, req *h
 	return &client, nil
 }
 
-func (w *Websocket) Send(event AnyEvent) {
+func (w *Websocket) Send(event AnySocketEvent) {
 	w.send <- event
 }
 
-func (w *Websocket) Events() ro.Observable[AnyEvent] {
+func (w *Websocket) Events() ro.Observable[AnySocketEvent] {
 	return w.observable
 }
 
@@ -104,14 +104,14 @@ func (w *Websocket) readPump() {
 			}
 			break
 		}
-		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+		message = bytes.TrimSpace(bytes.ReplaceAll(message, newline, space))
 		var event AnyEvent
 		err = json.Unmarshal(message, &event)
 		if err != nil {
 			log.Printf("error marshalling bytes: %v. Skipping message", err)
 			continue
 		}
-		w.observable.Next(event)
+		w.observable.Next(AnySocketEvent{Name: event.Name, Data: event.Data, Socket: w})
 	}
 }
 
@@ -128,7 +128,7 @@ func (w *Websocket) writePump() {
 	}()
 	for {
 		select {
-		case clientEvent, ok := <-w.send:
+		case socketEvent, ok := <-w.send:
 			w.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
@@ -140,11 +140,12 @@ func (w *Websocket) writePump() {
 			if err != nil {
 				return
 			}
-			message, err := json.Marshal(clientEvent)
+			event := AnyEvent{Name: socketEvent.Name, Data: socketEvent.Data}
+			message, err := json.Marshal(event)
 			if err == nil {
 				writer.Write(message)
 			} else {
-				log.Printf("failed to marshal event: %v. skipping", clientEvent.Name)
+				log.Printf("failed to marshal event: %v. skipping", socketEvent.Name)
 			}
 
 			if err := writer.Close(); err != nil {

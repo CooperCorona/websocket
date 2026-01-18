@@ -131,6 +131,14 @@ func (h *Hub[T]) Events() ro.Observable[AnySocketEvent] {
 	return h.events
 }
 
+func (h *Hub[T]) Publish(condition func(T) bool, eventName string, data any) {
+	for socket, hubData := range h.sockets {
+		if condition(hubData.userInfo) {
+			socket.Send(AnySocketEvent{Name: eventName, Data: data})
+		}
+	}
+}
+
 // Register registers a client with the given options to receive messages.
 // Blocks until the client is registered.
 func (h *Hub[T]) Register(socket Socket) {

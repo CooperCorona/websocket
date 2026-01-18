@@ -43,6 +43,16 @@ import (
 	}
 }*/
 
+type Identifiable interface {
+	ID() string
+}
+
+func WithID[T Identifiable](id string) func(T) bool {
+	return func(t T) bool {
+		return t.ID() == id
+	}
+}
+
 func Listen[T any](eventName string) func(ro.Observable[AnySocketEvent]) ro.Observable[SocketEvent[T]] {
 	return func(input ro.Observable[AnySocketEvent]) ro.Observable[SocketEvent[T]] {
 		return ro.Pipe3(input,
