@@ -214,10 +214,11 @@ func TestStress(t *testing.T) {
 	stub1.PostAndSleep("TestEvent", TestEvent{10})
 	stub1.PostAndSleep("TestEvent", TestEvent{20})
 	hub.Broadcast("HubEvent", TestEvent{30})
+	time.Sleep(time.Second / 10.0)
 	stub1.PostAndSleep("TestEvent", TestEvent{40})
 	stub1.PostAndSleep("TestEvent", TestEvent{50})
 	hub.Close()
 	time.Sleep(time.Second / 10.0)
 
-	rotesting.Assert[int](t).Source(testStream).ExpectNextSeq(10, 20, 40, 30, 30, 30, 50).Verify()
+	rotesting.Assert[int](t).Source(testStream).ExpectNextSeq(10, 20, 30, 30, 30, 40, 50).Verify()
 }
