@@ -43,6 +43,19 @@ type SocketEvent[T any] struct {
 	Socket Socket
 }
 
+type ConnectEvent[T any] struct {
+	UserInfo T
+}
+
+type CloseEvent[T any] struct {
+	UserInfo T
+}
+
+type ErrorEvent[T any] struct {
+	Err      error
+	UserInfo T
+}
+
 type SubscriptionOptions struct {
 	EventName           string
 	Filter              func(any) bool

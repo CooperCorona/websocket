@@ -191,7 +191,7 @@ func TestStress(t *testing.T) {
 	stub1.PanicOnClosedSend = true
 	hub.Register(stub1)
 	hub.Register(stub2)
-	hub.RegisterWithOptions(stub3, NewRegistrationOptionsForEvents("HubEvent"))
+	hub.RegisterWithOptions(stub3, NewRegistrationOptionsForEvents[User]("HubEvent"))
 	// allow hub to register
 	time.Sleep(time.Second / 10.0)
 	// printSub := HubPrintObserver(hub)
