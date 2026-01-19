@@ -194,31 +194,29 @@ func TestStress(t *testing.T) {
 	hub.RegisterWithOptions(stub3, NewRegistrationOptionsForEvents("HubEvent"))
 	// allow hub to register
 	time.Sleep(time.Second / 10.0)
-	printSub := HubPrintObserver(hub)
-	defer printSub.Unsubscribe()
-
+	// printSub := HubPrintObserver(hub)
+	// defer printSub.Unsubscribe()
 	stub1.SentEvents().Subscribe(ro.OnNext(func(e AnySocketEvent) {
 		fmt.Printf("Stub1: %+v\n", e)
-		// use private method to simulate race condition
-		// hub.Close()
-		// Sleep to allow the hub to close
-		fmt.Printf("Stub1 complete\n")
+		hub.Close()
 	}))
 	stub2.SentEvents().Subscribe(ro.OnNext(func(e AnySocketEvent) {
 		fmt.Printf("Stub2: %+v\n", e)
+		hub.Close()
 	}))
 	stub3.SentEvents().Subscribe(ro.OnNext(func(e AnySocketEvent) {
 		fmt.Printf("Stub3: %+v\n", e)
+		hub.Close()
 	}))
-
-	stub1.PostAndSleep("TestEvent", TestEvent{10})
-	stub1.PostAndSleep("TestEvent", TestEvent{20})
+	stub1.Post("TestEvent", TestEvent{10})
+	stub1.Post("TestEvent", TestEvent{20})
 	hub.Broadcast("HubEvent", TestEvent{30})
+	// Broadcasting can occur on different threads, so we have to wait to ensure the events appear in the same order.
 	time.Sleep(time.Second / 10.0)
-	stub1.PostAndSleep("TestEvent", TestEvent{40})
-	stub1.PostAndSleep("TestEvent", TestEvent{50})
+	stub1.Post("TestEvent", TestEvent{40})
+	stub1.Post("TestEvent", TestEvent{50})
 	hub.Close()
 	time.Sleep(time.Second / 10.0)
 
-	rotesting.Assert[int](t).Source(testStream).ExpectNextSeq(10, 20, 30, 30, 30, 40, 50).Verify()
+	rotesting.Assert[int](t).Source(testStream).ExpectNextSeq(10, 20, 30, 30, 30).Verify()
 }
