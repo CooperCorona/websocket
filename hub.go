@@ -33,10 +33,23 @@ type hubRegistrationData struct {
 	options HubRegistrationOptions
 }
 
+type hubUserInfoData[T any] struct {
+	socket   Socket
+	userInfo T
+}
+
+type publishData[T any] struct {
+	condition func(T) bool
+	name      string
+	data      any
+}
+
 type Hub[T any] struct {
 	sockets              map[Socket]hubSocketData[T]
 	register             chan hubRegistrationData
 	unregister           chan Socket
+	publish              chan publishData[T]
+	userInfo             chan hubUserInfoData[T]
 	close                chan bool
 	closeFlag            int32
 	CloseOnNoClients     bool
@@ -49,11 +62,14 @@ type Hub[T any] struct {
 
 // Creates and runs a Hub.
 func NewHub[T any]() *Hub[T] {
+	bufferSize := 0
 	hub := &Hub[T]{
 		sockets:              make(map[Socket]hubSocketData[T]),
-		register:             make(chan hubRegistrationData),
-		unregister:           make(chan Socket),
-		close:                make(chan bool),
+		register:             make(chan hubRegistrationData, bufferSize),
+		unregister:           make(chan Socket, bufferSize),
+		publish:              make(chan publishData[T], bufferSize),
+		close:                make(chan bool, bufferSize),
+		userInfo:             make(chan hubUserInfoData[T]),
 		closeFlag:            0,
 		CloseOnNoClients:     false,
 		clientsHaveExisted:   false,
@@ -81,6 +97,8 @@ func (h *Hub[T]) Run() {
 	defer h.closeHub()
 	defer close(h.unregister)
 	defer close(h.register)
+	defer close(h.publish)
+	defer close(h.userInfo)
 	timeoutTicker := time.NewTicker(h.CloseTimeout)
 	defer timeoutTicker.Stop()
 	for {
@@ -90,23 +108,22 @@ func (h *Hub[T]) Run() {
 			if _, ok := h.sockets[socket]; ok {
 				h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketAlreadyRegistered, socket})
 				h.emitError(ErrSocketAlreadyRegistered)
-				h.Close()
 				continue
 			}
 			h.clientsHaveExisted = true
-			subscription := socket.Events().Subscribe(ro.NewObserver(
+			subscription := ro.Pipe1(socket.Events(), ro.ObserveOn[AnySocketEvent](DefaultBufferSize)).Subscribe(ro.NewObserver(
 				func(event AnySocketEvent) {
+					fmt.Printf("Hub received %+v from %v\n", event, socket)
 					h.events.Next(event)
 				},
 				func(err error) {
-					delete(h.sockets, socket)
 					h.events.Next(AnySocketEvent{SocketErrorEventName, err, socket})
-					h.postRemoveSocketHook()
+					h.unregisterSocket(socket)
 				},
 				func() {
-					delete(h.sockets, socket)
+					fmt.Printf("socket closed callback: %v\n", socket)
 					h.events.Next(AnySocketEvent{SocketCloseEventName, nil, socket})
-					h.postRemoveSocketHook()
+					h.unregisterSocket(socket)
 				},
 			))
 			h.hubSubscription.AddUnsubscribable(subscription)
@@ -115,18 +132,34 @@ func (h *Hub[T]) Run() {
 				h.subscribeSocket(socket, option)
 			}
 			h.events.Next(AnySocketEvent{SocketConnectEventName, nil, socket})
-			fmt.Printf("Registered socket\n")
 		case socket := <-h.unregister:
+			// Check if socket is still registered to prevent double-unregistration
 			socketData, ok := h.sockets[socket]
 			if ok {
 				h.closeSocket(socketData)
+				// Remove from map after closing to prevent double processing
+				delete(h.sockets, socket)
 			} else {
 				h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketNotRegistered, socket})
 				h.emitError(ErrSocketNotRegistered)
-				h.Close()
 				continue
 			}
 			h.postRemoveSocketHook()
+		case data := <-h.publish:
+			for socket, hubData := range h.sockets {
+				if data.condition(hubData.userInfo) {
+					socket.Send(AnySocketEvent{Name: data.name, Data: data.data})
+				}
+			}
+		case data := <-h.userInfo:
+			socket := data.socket
+			socketData, ok := h.sockets[socket]
+			if !ok {
+				h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketNotRegistered, data.socket})
+				continue
+			}
+			socketData.userInfo = data.userInfo
+			h.sockets[socket] = socketData
 		case _ = <-h.close:
 			// This only occurs when Close() has been called, guaranteeing that the
 			// closeFlag is always set before closing.
@@ -151,11 +184,7 @@ func (h *Hub[T]) Events() ro.Observable[AnySocketEvent] {
 // Publish is the main entry point for non-sockets to send events to registered sockets.
 // For sockets to communicate with sockets, add SubscriptionOptions when registering.
 func (h *Hub[T]) Publish(condition func(T) bool, eventName string, data any) {
-	for socket, hubData := range h.sockets {
-		if condition(hubData.userInfo) {
-			socket.Send(AnySocketEvent{Name: eventName, Data: data})
-		}
-	}
+	h.publish <- publishData[T]{condition, eventName, data}
 }
 
 // Broadcasts publishes a message to all sockets unconditionally.
@@ -173,14 +202,15 @@ func (h *Hub[T]) Register(socket Socket) {
 // Blocks until the client is registered.
 func (h *Hub[T]) RegisterWithOptions(socket Socket, options HubRegistrationOptions) {
 	h.register <- hubRegistrationData{socket, options}
-	fmt.Printf("Register unblocked\n")
 }
 
-// Unregister removes a client. Blocks until the client is unregistered.
-func (h *Hub[T]) Unregister(socket Socket) {
+// unregisterSocket removes a client from the hub. This is an internal method
+// used only by the hub itself to manage socket lifecycle.
+func (h *Hub[T]) unregisterSocket(socket Socket) {
 	h.unregister <- socket
 }
 
+// Close closes the hub and all connected sockets.
 func (h *Hub[T]) Close() {
 	if atomic.CompareAndSwapInt32(&h.closeFlag, 0, 1) {
 		// Must be called on a separate goroutine, because if this occurs due to
@@ -198,18 +228,15 @@ func (h *Hub[T]) GetUserInfo(socket Socket) (T, error) {
 	return output, ErrSocketNotFound
 }
 
-func (h *Hub[T]) SetUserInfo(socket Socket, userInfo T) error {
-	if u, ok := h.sockets[socket]; ok {
-		u.userInfo = userInfo
-		h.sockets[socket] = u
-		return nil
-	}
-	return ErrSocketNotFound
+func (h *Hub[T]) SetUserInfo(socket Socket, userInfo T) {
+	h.userInfo <- hubUserInfoData[T]{socket, userInfo}
 }
 
 func (h *Hub[T]) closeHub() {
-	h.events.Complete()
 	h.closeAllSockets()
+	// events must complete after closing sockets or else they won't
+	// have a chance to listen to their complete events.
+	h.events.Complete()
 	h.hubSubscription.Unsubscribe()
 }
 
@@ -220,6 +247,7 @@ func (h *Hub[T]) closeAllSockets() {
 }
 
 func (h *Hub[T]) closeSocket(socket hubSocketData[T]) {
+	fmt.Printf("Closing socket: %v\n", socket.socket)
 	delete(h.sockets, socket.socket)
 	socket.socket.Close()
 	// no need to unsubscribe because hubSubscription owns all unsubscribing.

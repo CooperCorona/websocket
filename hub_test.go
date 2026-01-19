@@ -7,14 +7,29 @@ import (
 	"time"
 
 	"github.com/samber/ro"
+	rotesting "github.com/samber/ro/testing"
 )
+
+func HubPrintObserver[T any](hub *Hub[T]) ro.Subscription {
+	return hub.Events().Subscribe(ro.NewObserver(
+		func(value AnySocketEvent) {
+			fmt.Printf("hub onNext: %+v\n", value)
+		},
+		func(err error) {
+			fmt.Printf("hub onError: %v\n", err)
+		},
+		func() {
+			fmt.Printf("hub onComplete\n")
+		},
+	))
+}
 
 type TestEvent struct {
 	X int
 }
 
 func TestCooper(t *testing.T) {
-	socket := NewStub(ConfigurationOptions{BufferSize: DefaultBufferSize})
+	socket := NewStub()
 	subscription := ro.Pipe1(socket.Events(), Listen[TestEvent]("XEvent")).Subscribe(ro.OnNext(func(e SocketEvent[TestEvent]) {
 		fmt.Printf("TestEvent: %+v\n", e)
 	}))
@@ -29,14 +44,14 @@ func TestCooper(t *testing.T) {
 
 func TestHub(t *testing.T) {
 	hub := NewAnyHub()
-	stub := NewStub(ConfigurationOptions{})
+	stub := NewStub()
 	s4 := hub.Events().Subscribe(ro.OnComplete[AnySocketEvent](func() {
 		fmt.Printf("Hub completed\n")
 	}))
 	s5 := hub.Events().Subscribe(ro.OnError[AnySocketEvent](func(err error) {
 		fmt.Printf("Hub errored: %v\n", err)
 	}))
-	stub2 := NewStub(ConfigurationOptions{})
+	stub2 := NewStub()
 	hub.Register(stub)
 	hub.Register(stub2)
 	hub.CloseOnNoClients = true
@@ -78,18 +93,12 @@ type Order struct {
 func TestCrepes(t *testing.T) {
 	fmt.Printf("===== START =====\n")
 	hub := NewHub[User]()
-	stub1 := NewStub(ConfigurationOptions{})
-	stub2 := NewStub(ConfigurationOptions{})
+	stub1 := NewStub()
+	stub2 := NewStub()
 	hub.Register(stub1)
 	hub.Register(stub2)
-	err := hub.SetUserInfo(stub1, User{"A"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = hub.SetUserInfo(stub2, User{"B"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	hub.SetUserInfo(stub1, User{"A"})
+	hub.SetUserInfo(stub2, User{"B"})
 	orders := make(map[string][]Order)
 	s := Listen[CrepeEvent]("CrepeEvent")(hub.Events()).Subscribe(ro.OnNext(func(e SocketEvent[CrepeEvent]) {
 		user, err := hub.GetUserInfo(e.Socket)
@@ -117,7 +126,7 @@ func TestCrepes(t *testing.T) {
 	defer s3.Unsubscribe()
 	pushTicker := time.NewTicker(time.Second)
 	popTicker := time.NewTicker(time.Second * 2)
-	count := 1
+	count := 2
 	crepe := 0
 outerLoop:
 	for {
@@ -129,6 +138,7 @@ outerLoop:
 				stub = stub1
 			} else {
 				stub = stub2
+				stub1.Close()
 			}
 			stub.Post("CrepeEvent", CrepeEvent{fmt.Sprintf("Crepe #%d", crepe)})
 		case <-popTicker.C:
@@ -154,4 +164,60 @@ outerLoop:
 			}
 		}
 	}
+}
+
+func TestStress(t *testing.T) {
+	hub := NewHub[User]()
+	stub1 := NewStub()
+	stub2 := NewStub()
+	stub3 := NewStub()
+	testStream := ro.Pipe3(
+		ro.Merge(
+			hub.Events(),
+			stub1.SentEvents(),
+			stub2.SentEvents(),
+			stub3.SentEvents()),
+		ro.Filter(func(e AnySocketEvent) bool {
+			_, ok := e.Data.(TestEvent)
+			return ok
+		}),
+		ro.Map(func(e AnySocketEvent) int {
+			return e.Data.(TestEvent).X
+		}),
+		ro.ShareReplay[int](1000),
+	)
+	defer testStream.Subscribe(ro.PrintObserver[int]()).Unsubscribe()
+
+	stub1.PanicOnClosedSend = true
+	hub.Register(stub1)
+	hub.Register(stub2)
+	hub.RegisterWithOptions(stub3, NewRegistrationOptionsForEvents("HubEvent"))
+	// allow hub to register
+	time.Sleep(time.Second / 10.0)
+	printSub := HubPrintObserver(hub)
+	defer printSub.Unsubscribe()
+
+	stub1.SentEvents().Subscribe(ro.OnNext(func(e AnySocketEvent) {
+		fmt.Printf("Stub1: %+v\n", e)
+		// use private method to simulate race condition
+		// hub.Close()
+		// Sleep to allow the hub to close
+		fmt.Printf("Stub1 complete\n")
+	}))
+	stub2.SentEvents().Subscribe(ro.OnNext(func(e AnySocketEvent) {
+		fmt.Printf("Stub2: %+v\n", e)
+	}))
+	stub3.SentEvents().Subscribe(ro.OnNext(func(e AnySocketEvent) {
+		fmt.Printf("Stub3: %+v\n", e)
+	}))
+
+	stub1.PostAndSleep("TestEvent", TestEvent{10})
+	stub1.PostAndSleep("TestEvent", TestEvent{20})
+	hub.Broadcast("HubEvent", TestEvent{30})
+	stub1.PostAndSleep("TestEvent", TestEvent{40})
+	stub1.PostAndSleep("TestEvent", TestEvent{50})
+	hub.Close()
+	time.Sleep(time.Second / 10.0)
+
+	rotesting.Assert[int](t).Source(testStream).ExpectNextSeq(10, 20, 40, 30, 30, 30, 50).Verify()
 }
