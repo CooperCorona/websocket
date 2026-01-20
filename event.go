@@ -93,11 +93,19 @@ func Cast[T any](e AnySocketEvent) (SocketEvent[T], error) {
 	}
 }
 
-func IfCast[T any](a AnySocketEvent, callback func(T) bool) bool {
+func WithCast[T any, U any](a AnySocketEvent, callback func(T) U) U {
 	event, err := Cast[T](a)
 	if err != nil {
 		// couldn't cast
-		return false
+		var zero U
+		return zero
 	}
 	return callback(event.Data)
+}
+
+func WhenCast[T any](a AnySocketEvent, callback func(T)) {
+	WithCast(a, func(t T) struct{} {
+		callback(t)
+		return struct{}{}
+	})
 }
