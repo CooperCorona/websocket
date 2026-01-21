@@ -140,16 +140,23 @@ func (w *Websocket) writePump() {
 			if err != nil {
 				return
 			}
-			event := AnyEvent{Name: socketEvent.Name, Data: socketEvent.Data}
-			message, err := json.Marshal(event)
+			// because AnyEvent is JSON, we must parse it into
+			// bytes before we can serialize the entire message.
+			dataBytes, err := json.Marshal(socketEvent.Data)
 			if err == nil {
-				writer.Write(message)
-			} else {
-				log.Printf("failed to marshal event: %v. skipping", socketEvent.Name)
-			}
+				event := AnyEvent{Name: socketEvent.Name, Data: dataBytes}
+				message, err := json.Marshal(event)
+				if err == nil {
+					writer.Write(message)
+				} else {
+					log.Printf("failed to marshal event: %v. skipping", socketEvent.Name)
+				}
 
-			if err := writer.Close(); err != nil {
-				return
+				if err := writer.Close(); err != nil {
+					return
+				}
+			} else {
+				log.Printf("failed to marshal event: %v due to %v. skipping", socketEvent.Name, err)
 			}
 		case <-ticker.C:
 			w.conn.SetWriteDeadline(time.Now().Add(writeWait))

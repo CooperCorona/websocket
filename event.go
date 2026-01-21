@@ -21,8 +21,8 @@ func AlwaysTrue[T any]() func(T) bool {
 
 // A type-erased event sent to or from a socket.
 type AnyEvent struct {
-	Name string `json:"name"`
-	Data any    `json:"data"`
+	Name string          `json:"name"`
+	Data json.RawMessage `json:"data"`
 }
 
 // AnySocketEvent represents a type-erased event with a known provenance.
@@ -93,18 +93,18 @@ func Cast[T any](e AnySocketEvent) (SocketEvent[T], error) {
 	}
 }
 
-func WithCast[T any, U any](a AnySocketEvent, callback func(T) U) U {
+func WithCast[T any, U any](a AnySocketEvent, callback func(SocketEvent[T]) U) U {
 	event, err := Cast[T](a)
 	if err != nil {
 		// couldn't cast
 		var zero U
 		return zero
 	}
-	return callback(event.Data)
+	return callback(event)
 }
 
-func WhenCast[T any](a AnySocketEvent, callback func(T)) {
-	WithCast(a, func(t T) struct{} {
+func WhenCast[T any](a AnySocketEvent, callback func(SocketEvent[T])) {
+	WithCast(a, func(t SocketEvent[T]) struct{} {
 		callback(t)
 		return struct{}{}
 	})
