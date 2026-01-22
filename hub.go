@@ -110,6 +110,20 @@ func (h *Hub[T]) ErrorEvents() ro.Observable[SocketEvent[ErrorEvent[T]]] {
 	return ro.Pipe1(h.events, Listen[ErrorEvent[T]](SocketErrorEventName))
 }
 
+// DisconnectEvents combines the Close and Error streams so clients can
+// register a single callback to handle when streams close.
+func (h *Hub[T]) DisconnectEvents() ro.Observable[SocketEvent[CloseEvent[T]]] {
+	errorToClose := ro.Pipe1(h.ErrorEvents(),
+		ro.Map(func(e SocketEvent[ErrorEvent[T]]) SocketEvent[CloseEvent[T]] {
+			return SocketEvent[CloseEvent[T]]{
+				Name:   e.Name,
+				Socket: e.Socket,
+				Data:   CloseEvent[T]{UserInfo: e.Data.UserInfo},
+			}
+		}))
+	return ro.Merge(h.CloseEvents(), errorToClose)
+}
+
 // Publish sends a message to all sockets whose user info satisfies a condition.
 // Publish is the main entry point for non-sockets to send events to registered sockets.
 // For sockets to communicate with sockets, add SubscriptionOptions when registering.

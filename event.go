@@ -109,3 +109,10 @@ func WhenCast[T any](a AnySocketEvent, callback func(SocketEvent[T])) {
 		return struct{}{}
 	})
 }
+
+func On[T any](eventName string, a AnySocketEvent, callback func(SocketEvent[T])) {
+	if a.Name != eventName {
+		return
+	}
+	WhenCast(a, callback)
+}
