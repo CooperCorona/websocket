@@ -195,7 +195,7 @@ func (h *Hub[T]) registerWithOptions(socket Socket, options HubRegistrationOptio
 			data, _ := h.sockets[socket]
 			delete(h.sockets, socket)
 			h.events.Next(AnySocketEvent{
-				SocketErrorEventName,
+				SocketCloseEventName,
 				CloseEvent[T]{data.userInfo},
 				socket,
 			})
