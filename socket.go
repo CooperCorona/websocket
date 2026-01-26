@@ -12,9 +12,9 @@ var (
 )
 
 type Socket interface {
-	Send(AnySocketEvent)
+	Send(AnyEvent)
 
-	Events() ro.Observable[AnySocketEvent]
+	Events() ro.Observable[AnyEvent]
 
 	// Closes the client. May block until the client is closed.
 	Close()
@@ -22,8 +22,8 @@ type Socket interface {
 
 // SocketStub is a Socket you can manually send events to.
 type SocketStub struct {
-	subject           ro.Subject[AnySocketEvent]
-	sentEvents        ro.Subject[AnySocketEvent]
+	subject           ro.Subject[AnyEvent]
+	sentEvents        ro.Subject[AnyEvent]
 	PanicOnClosedSend bool
 }
 
@@ -36,21 +36,21 @@ func NewStub() *SocketStub {
 }
 
 func NewStubWithOptions(options ConfigurationOptions) *SocketStub {
-	return &SocketStub{ro.NewSubject[AnySocketEvent](), ro.NewSubject[AnySocketEvent](), false}
+	return &SocketStub{ro.NewSubject[AnyEvent](), ro.NewSubject[AnyEvent](), false}
 }
 
-func (s *SocketStub) Send(event AnySocketEvent) {
+func (s *SocketStub) Send(event AnyEvent) {
 	if s.sentEvents.IsClosed() && s.PanicOnClosedSend {
 		panic(ErrSocketClosed)
 	}
 	s.sentEvents.Next(event)
 }
 
-func (s *SocketStub) Events() ro.Observable[AnySocketEvent] {
+func (s *SocketStub) Events() ro.Observable[AnyEvent] {
 	return s.subject
 }
 
-func (s *SocketStub) SentEvents() ro.Observable[AnySocketEvent] {
+func (s *SocketStub) SentEvents() ro.Observable[AnyEvent] {
 	return s.sentEvents
 }
 
@@ -64,13 +64,15 @@ func (s *SocketStub) CloseWithError(err error) {
 }
 
 func (s *SocketStub) Post(name string, data any) {
-	s.subject.Next(AnySocketEvent{name, data, s})
+	j, _ := AsJSON(data)
+	s.subject.Next(AnyEvent{name, j})
 }
 
 // Manually emits a message and sleeps for 0.1 seconds.
 // Useful for tests where it's crucial for the event loop to
 // allow observers to receive the message before the test proceeds.
 func (s *SocketStub) PostAndSleep(name string, data any) {
-	s.subject.Next(AnySocketEvent{name, data, s})
+	j, _ := AsJSON(data)
+	s.subject.Next(AnyEvent{name, j})
 	time.Sleep(time.Second / 10.0)
 }

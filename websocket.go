@@ -38,15 +38,15 @@ type Websocket struct {
 	// The websocket connection.
 	conn *websocket.Conn
 
-	send chan AnySocketEvent
+	send chan AnyEvent
 
 	// observable is an observable wrapping emit.
-	observable ro.Subject[AnySocketEvent]
+	observable ro.Subject[AnyEvent]
 }
 
 func NewWebsocket(conn *websocket.Conn, options ConfigurationOptions) Websocket {
-	send := make(chan AnySocketEvent, options.BufferSize)
-	observable := ro.NewSubject[AnySocketEvent]()
+	send := make(chan AnyEvent, options.BufferSize)
+	observable := ro.NewSubject[AnyEvent]()
 	return Websocket{conn, send, observable}
 }
 
@@ -69,11 +69,11 @@ func UpgradeWebsocket(upgrader websocket.Upgrader, w http.ResponseWriter, req *h
 	return &client, nil
 }
 
-func (w *Websocket) Send(event AnySocketEvent) {
+func (w *Websocket) Send(event AnyEvent) {
 	w.send <- event
 }
 
-func (w *Websocket) Events() ro.Observable[AnySocketEvent] {
+func (w *Websocket) Events() ro.Observable[AnyEvent] {
 	return w.observable
 }
 
@@ -105,13 +105,13 @@ func (w *Websocket) readPump() {
 			break
 		}
 		message = bytes.TrimSpace(bytes.ReplaceAll(message, newline, space))
-		var event AnyEvent
+		var event JSONEvent
 		err = json.Unmarshal(message, &event)
 		if err != nil {
 			log.Printf("error marshalling bytes: %v. Skipping message", err)
 			continue
 		}
-		w.observable.Next(AnySocketEvent{Name: event.Name, Data: event.Data, Socket: w})
+		w.observable.Next(AnyEvent{event.Name, event.Data})
 	}
 }
 
@@ -140,7 +140,7 @@ func (w *Websocket) writePump() {
 			if err != nil {
 				return
 			}
-			// because AnyEvent is JSON, we must parse it into
+			// because AnyEvent isn't JSON, we must parse it into
 			// bytes before we can serialize the entire message.
 			dataBytes, err := json.Marshal(socketEvent.Data)
 			if err == nil {

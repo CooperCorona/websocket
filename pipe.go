@@ -41,3 +41,13 @@ func Listen[T any](eventName string) func(ro.Observable[AnySocketEvent]) ro.Obse
 		)
 	}
 }
+
+func ToAnySocketEvent(socket Socket) func(ro.Observable[AnyEvent]) ro.Observable[AnySocketEvent] {
+	return ro.Map(func(e AnyEvent) AnySocketEvent {
+		return AnySocketEvent{
+			Name:   e.Name,
+			Data:   e.Data,
+			Socket: socket,
+		}
+	})
+}

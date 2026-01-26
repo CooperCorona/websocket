@@ -179,8 +179,8 @@ func (h *Hub[T]) registerWithOptions(socket Socket, options HubRegistrationOptio
 	}
 	h.clientsHaveExisted = true
 	subscription := socket.Events().Subscribe(ro.NewObserver(
-		func(event AnySocketEvent) {
-			h.events.Next(event)
+		func(event AnyEvent) {
+			h.events.Next(AnySocketEvent{event.Name, event.Data, socket})
 		},
 		func(err error) {
 			data, _ := h.sockets[socket]
@@ -218,7 +218,7 @@ func (h *Hub[T]) unregisterSocket(socket Socket) {
 		// Basically, unregister requests a close, the close handler completes it.
 		socketData.socket.Close()
 	} else {
-		h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketNotRegistered, socket})
+		h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketNotRegistered, nil})
 		h.emitError(ErrSocketNotRegistered)
 		return
 	}
@@ -228,7 +228,7 @@ func (h *Hub[T]) unregisterSocket(socket Socket) {
 func (h *Hub[T]) publish(condition func(T) bool, eventName string, data any) {
 	for socket, hubData := range h.sockets {
 		if condition(hubData.userInfo) {
-			socket.Send(AnySocketEvent{Name: eventName, Data: data})
+			socket.Send(AnyEvent{Name: eventName, Data: data})
 		}
 	}
 }
@@ -282,7 +282,13 @@ func (h *Hub[T]) subscribeSocket(socket Socket, options SubscriptionOptions) {
 			return options.Filter(e.Data)
 		}),
 	).Subscribe(ro.OnNext(func(e AnySocketEvent) {
-		socket.Send(e)
+		// Convert AnySocketEvent to AnyEvent before sending
+		event, err := e.AsAnyEvent()
+		if err != nil {
+			// Handle error appropriately, perhaps log it
+			return
+		}
+		socket.Send(event)
 	}))
 	h.hubSubscription.AddUnsubscribable(sub)
 }

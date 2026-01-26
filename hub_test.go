@@ -28,20 +28,6 @@ type TestEvent struct {
 	X int
 }
 
-func TestCooper(t *testing.T) {
-	socket := NewStub()
-	subscription := ro.Pipe1(socket.Events(), Listen[TestEvent]("XEvent")).Subscribe(ro.OnNext(func(e SocketEvent[TestEvent]) {
-		fmt.Printf("TestEvent: %+v\n", e)
-	}))
-	defer subscription.Unsubscribe()
-	socket.Post("XEvent", TestEvent{10})
-	socket.Post("XEvent", 15)
-	socket.Post("YEvent", TestEvent{20})
-	socket.Post("XEvent", TestEvent{30})
-	socket.Close()
-	subscription.Wait()
-}
-
 func TestHub(t *testing.T) {
 	hub := NewAnyHub()
 	stub := NewStub()
@@ -90,6 +76,17 @@ type Order struct {
 	User string
 }
 
+func listenAny[T any](eventName string, socket Socket) func(ro.Observable[AnyEvent]) ro.Observable[SocketEvent[T]] {
+	return func(o ro.Observable[AnyEvent]) ro.Observable[SocketEvent[T]] {
+		return ro.Pipe2(o,
+			ro.Map(func(a AnyEvent) AnySocketEvent {
+				return AnySocketEvent{Name: a.Name, Data: a.Data, Socket: socket}
+			}),
+			Listen[T](eventName),
+		)
+	}
+}
+
 func TestCrepes(t *testing.T) {
 	fmt.Printf("===== START =====\n")
 	hub := NewHub[User]()
@@ -115,10 +112,10 @@ func TestCrepes(t *testing.T) {
 	}))
 	// Listen doesn't work because it's not a SocketEvent. Maybe we need to make it a SocketEvent and just discard
 	// the socket, allowing it to be nil.
-	s2 := Listen[OrderFulfilledEvent]("OrderFulfilledEvent")(stub1.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent]) {
+	s2 := listenAny[OrderFulfilledEvent]("OrderFulfilledEvent", stub1)(stub1.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent]) {
 		fmt.Printf("stub1 order fulfilled: %+v\n", e.Data)
 	}))
-	s3 := Listen[OrderFulfilledEvent]("OrderFulfilledEvent")(stub2.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent]) {
+	s3 := listenAny[OrderFulfilledEvent]("OrderFulfilledEvent", stub1)(stub2.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent]) {
 		fmt.Printf("stub2 order fulfilled: %+v\n", e.Data)
 	}))
 	defer s.Unsubscribe()
@@ -174,9 +171,9 @@ func TestStress(t *testing.T) {
 	testStream := ro.Pipe3(
 		ro.Merge(
 			hub.Events(),
-			stub1.SentEvents(),
-			stub2.SentEvents(),
-			stub3.SentEvents()),
+			ToAnySocketEvent(stub1)(stub1.SentEvents()),
+			ToAnySocketEvent(stub2)(stub2.SentEvents()),
+			ToAnySocketEvent(stub3)(stub3.SentEvents())),
 		ro.Filter(func(e AnySocketEvent) bool {
 			_, ok := e.Data.(TestEvent)
 			return ok
@@ -196,15 +193,15 @@ func TestStress(t *testing.T) {
 	time.Sleep(time.Second / 10.0)
 	// printSub := HubPrintObserver(hub)
 	// defer printSub.Unsubscribe()
-	stub1.SentEvents().Subscribe(ro.OnNext(func(e AnySocketEvent) {
+	stub1.SentEvents().Subscribe(ro.OnNext(func(e AnyEvent) {
 		fmt.Printf("Stub1: %+v\n", e)
 		hub.Close()
 	}))
-	stub2.SentEvents().Subscribe(ro.OnNext(func(e AnySocketEvent) {
+	stub2.SentEvents().Subscribe(ro.OnNext(func(e AnyEvent) {
 		fmt.Printf("Stub2: %+v\n", e)
 		hub.Close()
 	}))
-	stub3.SentEvents().Subscribe(ro.OnNext(func(e AnySocketEvent) {
+	stub3.SentEvents().Subscribe(ro.OnNext(func(e AnyEvent) {
 		fmt.Printf("Stub3: %+v\n", e)
 		hub.Close()
 	}))

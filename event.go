@@ -21,6 +21,13 @@ func AlwaysTrue[T any]() func(T) bool {
 
 // A type-erased event sent to or from a socket.
 type AnyEvent struct {
+	Name string `json:"name"`
+	Data any    `json:"data"`
+}
+
+// A type-erased event structed as JSON so websockets don't parse into maps,
+// which cannot be gracefully parsed to an explicit type later.
+type JSONEvent struct {
 	Name string          `json:"name"`
 	Data json.RawMessage `json:"data"`
 }
@@ -34,6 +41,22 @@ type AnySocketEvent struct {
 	Socket Socket
 }
 
+func AsJSON(a any) (json.RawMessage, error) {
+	if j, ok := a.(json.RawMessage); ok {
+		return j, nil
+	}
+	return json.Marshal(a)
+}
+
+func (a AnySocketEvent) AsAnyEvent() (AnyEvent, error) {
+	return AnyEvent{Name: a.Name, Data: a.Data}, nil
+	// j, err := AsJSON(a.Data)
+	// if err != nil {
+	// 	return AnyEvent{}, err
+	// }
+	// return AnyEvent{Name: a.Name, Data: j}, nil
+}
+
 // SocketEvent is a parameterized event with a known provenance.
 // Socket may be nil, but that represents an event with no
 // source, such as a programatically determined one.
@@ -41,6 +64,10 @@ type SocketEvent[T any] struct {
 	Name   string
 	Data   T
 	Socket Socket
+}
+
+func (a SocketEvent[T]) AsAnyEvent() (AnyEvent, error) {
+	return AnySocketEvent{Name: a.Name, Data: a.Data, Socket: a.Socket}.AsAnyEvent()
 }
 
 type ConnectEvent[T any] struct {
