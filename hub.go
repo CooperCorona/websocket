@@ -173,7 +173,8 @@ func (h *Hub[T]) registerWithOptions(socket Socket, options HubRegistrationOptio
 	h.clientsHaveExisted = true
 	subscription := socket.Events().Subscribe(ro.NewObserver(
 		func(event AnyEvent) {
-			h.events.Next(AnySocketEvent[T]{event.Name, event.Data, socket, options.UserInfo})
+			data, _ := h.sockets[socket]
+			h.events.Next(AnySocketEvent[T]{event.Name, event.Data, socket, data.userInfo})
 		},
 		func(err error) {
 			data, _ := h.sockets[socket]
