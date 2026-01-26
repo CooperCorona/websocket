@@ -160,14 +160,6 @@ func (h *Hub[T]) Close() {
 	h.requests.Next(newCloseRequest[T]())
 }
 
-func (h *Hub[T]) GetUserInfo(socket Socket) (T, error) {
-	if u, ok := h.sockets[socket]; ok {
-		return u.userInfo, nil
-	}
-	var output T
-	return output, ErrSocketNotFound
-}
-
 func (h *Hub[T]) SetUserInfo(socket Socket, userInfo T) {
 	h.requests.Next(newUserInfoRequest(socket, userInfo))
 }

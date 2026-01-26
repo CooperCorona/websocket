@@ -98,10 +98,7 @@ func TestCrepes(t *testing.T) {
 	hub.SetUserInfo(stub2, User{"B"})
 	orders := make(map[string][]Order)
 	s := Listen[CrepeEvent, User]("CrepeEvent")(hub.Events()).Subscribe(ro.OnNext(func(e SocketEvent[CrepeEvent, User]) {
-		user, err := hub.GetUserInfo(e.Socket)
-		if err != nil {
-			fmt.Printf("ERR: no user info: %v\n", err)
-		}
+		user := e.UserInfo
 		o := Order{e.Data.Name, user.ID()}
 		fmt.Printf("Pushed: %+v\n", o)
 		if ords, ok := orders[user.ID()]; ok {
