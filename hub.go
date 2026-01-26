@@ -39,7 +39,7 @@ type Hub[T any] struct {
 	clientsHaveExisted   bool
 	CloseTimeout         time.Duration
 	lastMessageTimestamp time.Time
-	events               ro.Subject[AnySocketEvent]
+	events               ro.Subject[AnySocketEvent[T]]
 	hubSubscription      ro.Subscription // hubSubscription is a parent subscription for all sockets attached to this hub, for easy closing.
 }
 
@@ -53,7 +53,7 @@ func NewHub[T any]() *Hub[T] {
 		clientsHaveExisted:   false,
 		CloseTimeout:         time.Minute * 10,
 		lastMessageTimestamp: time.Now(),
-		events:               ro.NewSubject[AnySocketEvent](),
+		events:               ro.NewSubject[AnySocketEvent[T]](),
 		hubSubscription:      ro.NewSubscription(nil),
 	}
 	ro.ObserveOn[hubRequest[T]](DefaultBufferSize)(hub.requests).Subscribe(ro.NewObserver(
@@ -94,31 +94,32 @@ func NewAnyHub() *AnyHub {
 	return NewHub[Empty]()
 }
 
-func (h *Hub[T]) Events() ro.Observable[AnySocketEvent] {
+func (h *Hub[T]) Events() ro.Observable[AnySocketEvent[T]] {
 	return h.events
 }
 
-func (h *Hub[T]) ConnectEvents() ro.Observable[SocketEvent[ConnectEvent[T]]] {
-	return ro.Pipe1(h.events, Listen[ConnectEvent[T]](SocketConnectEventName))
+func (h *Hub[T]) ConnectEvents() ro.Observable[EmptySocketEvent[T]] {
+	return ro.Pipe1(h.events, Listen[Empty, T](SocketConnectEventName))
 }
 
-func (h *Hub[T]) CloseEvents() ro.Observable[SocketEvent[CloseEvent[T]]] {
-	return ro.Pipe1(h.events, Listen[CloseEvent[T]](SocketCloseEventName))
+func (h *Hub[T]) CloseEvents() ro.Observable[EmptySocketEvent[T]] {
+	return ro.Pipe1(h.events, Listen[Empty, T](SocketCloseEventName))
 }
 
-func (h *Hub[T]) ErrorEvents() ro.Observable[SocketEvent[ErrorEvent[T]]] {
-	return ro.Pipe1(h.events, Listen[ErrorEvent[T]](SocketErrorEventName))
+func (h *Hub[T]) ErrorEvents() ro.Observable[SocketEvent[ErrorEvent, T]] {
+	return ro.Pipe1(h.events, Listen[ErrorEvent, T](SocketErrorEventName))
 }
 
 // DisconnectEvents combines the Close and Error streams so clients can
 // register a single callback to handle when streams close.
-func (h *Hub[T]) DisconnectEvents() ro.Observable[SocketEvent[CloseEvent[T]]] {
+func (h *Hub[T]) DisconnectEvents() ro.Observable[EmptySocketEvent[T]] {
 	errorToClose := ro.Pipe1(h.ErrorEvents(),
-		ro.Map(func(e SocketEvent[ErrorEvent[T]]) SocketEvent[CloseEvent[T]] {
-			return SocketEvent[CloseEvent[T]]{
-				Name:   e.Name,
-				Socket: e.Socket,
-				Data:   CloseEvent[T]{UserInfo: e.Data.UserInfo},
+		ro.Map(func(e SocketEvent[ErrorEvent, T]) EmptySocketEvent[T] {
+			return EmptySocketEvent[T]{
+				Name:     e.Name,
+				Socket:   e.Socket,
+				Data:     Empty{},
+				UserInfo: e.UserInfo,
 			}
 		}))
 	return ro.Merge(h.CloseEvents(), errorToClose)
@@ -173,31 +174,33 @@ func (h *Hub[T]) SetUserInfo(socket Socket, userInfo T) {
 
 func (h *Hub[T]) registerWithOptions(socket Socket, options HubRegistrationOptions[T]) {
 	if _, ok := h.sockets[socket]; ok {
-		h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketAlreadyRegistered, socket})
+		h.events.Next(AnySocketEvent[T]{SocketErrorEventName, ErrSocketAlreadyRegistered, socket, options.UserInfo})
 		h.emitError(ErrSocketAlreadyRegistered)
 		return
 	}
 	h.clientsHaveExisted = true
 	subscription := socket.Events().Subscribe(ro.NewObserver(
 		func(event AnyEvent) {
-			h.events.Next(AnySocketEvent{event.Name, event.Data, socket})
+			h.events.Next(AnySocketEvent[T]{event.Name, event.Data, socket, options.UserInfo})
 		},
 		func(err error) {
 			data, _ := h.sockets[socket]
 			delete(h.sockets, socket)
-			h.events.Next(AnySocketEvent{
+			h.events.Next(AnySocketEvent[T]{
 				SocketErrorEventName,
-				ErrorEvent[T]{err, data.userInfo},
+				ErrorEvent{err},
 				socket,
+				data.userInfo,
 			})
 		},
 		func() {
 			data, _ := h.sockets[socket]
 			delete(h.sockets, socket)
-			h.events.Next(AnySocketEvent{
+			h.events.Next(AnySocketEvent[T]{
 				SocketCloseEventName,
-				CloseEvent[T]{data.userInfo},
+				Empty{},
 				socket,
+				data.userInfo,
 			})
 		},
 	))
@@ -207,7 +210,7 @@ func (h *Hub[T]) registerWithOptions(socket Socket, options HubRegistrationOptio
 	for _, option := range options.Subscriptions {
 		h.subscribeSocket(socket, option)
 	}
-	h.events.Next(AnySocketEvent{SocketConnectEventName, ConnectEvent[T]{data.userInfo}, socket})
+	h.events.Next(AnySocketEvent[T]{SocketConnectEventName, Empty{}, socket, data.userInfo})
 }
 
 func (h *Hub[T]) unregisterSocket(socket Socket) {
@@ -218,7 +221,7 @@ func (h *Hub[T]) unregisterSocket(socket Socket) {
 		// Basically, unregister requests a close, the close handler completes it.
 		socketData.socket.Close()
 	} else {
-		h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketNotRegistered, nil})
+		h.events.Next(AnySocketEvent[T]{SocketErrorEventName, ErrSocketNotRegistered, nil, socketData.userInfo})
 		h.emitError(ErrSocketNotRegistered)
 		return
 	}
@@ -236,7 +239,7 @@ func (h *Hub[T]) publish(condition func(T) bool, eventName string, data any) {
 func (h *Hub[T]) setUserInfo(socket Socket, userInfo T) {
 	socketData, ok := h.sockets[socket]
 	if !ok {
-		h.events.Next(AnySocketEvent{SocketErrorEventName, ErrSocketNotRegistered, socket})
+		h.events.Next(AnySocketEvent[T]{SocketErrorEventName, ErrSocketNotRegistered, socket, socketData.userInfo})
 		return
 	}
 	socketData.userInfo = userInfo
@@ -274,15 +277,15 @@ func (h *Hub[T]) postRemoveSocketHook() {
 // the interface. The stub needs to be abstract to support stubbing.
 func (h *Hub[T]) subscribeSocket(socket Socket, options SubscriptionOptions) {
 	sub := ro.Pipe3(h.Events(),
-		ro.Filter(func(e AnySocketEvent) bool {
+		ro.Filter(func(e AnySocketEvent[T]) bool {
 			return e.Socket != socket || options.ReceiveSelfMessages
 		}),
-		ListenAny(options.EventName),
-		ro.Filter(func(e AnySocketEvent) bool {
+		ListenAny[T](options.EventName),
+		ro.Filter(func(e AnySocketEvent[T]) bool {
 			return options.Filter(e.Data)
 		}),
-	).Subscribe(ro.OnNext(func(e AnySocketEvent) {
-		// Convert AnySocketEvent to AnyEvent before sending
+	).Subscribe(ro.OnNext(func(e AnySocketEvent[T]) {
+		// Convert AnySocketEvent[T] to AnyEvent before sending
 		event, err := e.AsAnyEvent()
 		if err != nil {
 			// Handle error appropriately, perhaps log it

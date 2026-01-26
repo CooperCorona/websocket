@@ -140,10 +140,6 @@ func (w *Websocket) writePump() {
 			if err != nil {
 				return
 			}
-			// because AnyEvent isn't JSON, we must parse it into
-			// bytes before we can serialize the entire message.
-			// dataBytes, err := json.Marshal(socketEvent.Data)
-			// if err == nil {
 			event := AnyEvent{Name: socketEvent.Name, Data: socketEvent.Data}
 			message, err := json.Marshal(event)
 			if err == nil {
@@ -155,9 +151,6 @@ func (w *Websocket) writePump() {
 			if err := writer.Close(); err != nil {
 				return
 			}
-			// } else {
-			// 	log.Printf("failed to marshal event: %v due to %v. skipping", socketEvent.Name, err)
-			// }
 		case <-ticker.C:
 			w.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := w.conn.WriteMessage(websocket.PingMessage, nil); err != nil {

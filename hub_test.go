@@ -12,7 +12,7 @@ import (
 
 func HubPrintObserver[T any](hub *Hub[T]) ro.Subscription {
 	return hub.Events().Subscribe(ro.NewObserver(
-		func(value AnySocketEvent) {
+		func(value AnySocketEvent[T]) {
 			fmt.Printf("hub onNext: %+v\n", value)
 		},
 		func(err error) {
@@ -31,17 +31,17 @@ type TestEvent struct {
 func TestHub(t *testing.T) {
 	hub := NewAnyHub()
 	stub := NewStub()
-	s4 := hub.Events().Subscribe(ro.OnComplete[AnySocketEvent](func() {
+	s4 := hub.Events().Subscribe(ro.OnComplete[AnySocketEvent[Empty]](func() {
 		fmt.Printf("Hub completed\n")
 	}))
-	s5 := hub.Events().Subscribe(ro.OnError[AnySocketEvent](func(err error) {
+	s5 := hub.Events().Subscribe(ro.OnError[AnySocketEvent[Empty]](func(err error) {
 		fmt.Printf("Hub errored: %v\n", err)
 	}))
 	stub2 := NewStub()
 	hub.Register(stub)
 	hub.Register(stub2)
 	hub.CloseOnNoClients = true
-	s1 := hub.Events().Subscribe(ro.OnNext(func(e AnySocketEvent) {
+	s1 := hub.Events().Subscribe(ro.OnNext(func(e AnySocketEvent[Empty]) {
 		fmt.Printf("Event: %+v\n", e)
 	}))
 	defer s1.Unsubscribe()
@@ -76,13 +76,13 @@ type Order struct {
 	User string
 }
 
-func listenAny[T any](eventName string, socket Socket) func(ro.Observable[AnyEvent]) ro.Observable[SocketEvent[T]] {
-	return func(o ro.Observable[AnyEvent]) ro.Observable[SocketEvent[T]] {
+func listenAny[T any, U any](eventName string, socket Socket) func(ro.Observable[AnyEvent]) ro.Observable[SocketEvent[T, U]] {
+	return func(o ro.Observable[AnyEvent]) ro.Observable[SocketEvent[T, U]] {
 		return ro.Pipe2(o,
-			ro.Map(func(a AnyEvent) AnySocketEvent {
-				return AnySocketEvent{Name: a.Name, Data: a.Data, Socket: socket}
+			ro.Map(func(a AnyEvent) AnySocketEvent[U] {
+				return AnySocketEvent[U]{Name: a.Name, Data: a.Data, Socket: socket}
 			}),
-			Listen[T](eventName),
+			Listen[T, U](eventName),
 		)
 	}
 }
@@ -97,7 +97,7 @@ func TestCrepes(t *testing.T) {
 	hub.SetUserInfo(stub1, User{"A"})
 	hub.SetUserInfo(stub2, User{"B"})
 	orders := make(map[string][]Order)
-	s := Listen[CrepeEvent]("CrepeEvent")(hub.Events()).Subscribe(ro.OnNext(func(e SocketEvent[CrepeEvent]) {
+	s := Listen[CrepeEvent, User]("CrepeEvent")(hub.Events()).Subscribe(ro.OnNext(func(e SocketEvent[CrepeEvent, User]) {
 		user, err := hub.GetUserInfo(e.Socket)
 		if err != nil {
 			fmt.Printf("ERR: no user info: %v\n", err)
@@ -112,10 +112,10 @@ func TestCrepes(t *testing.T) {
 	}))
 	// Listen doesn't work because it's not a SocketEvent. Maybe we need to make it a SocketEvent and just discard
 	// the socket, allowing it to be nil.
-	s2 := listenAny[OrderFulfilledEvent]("OrderFulfilledEvent", stub1)(stub1.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent]) {
+	s2 := listenAny[OrderFulfilledEvent, User]("OrderFulfilledEvent", stub1)(stub1.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent, User]) {
 		fmt.Printf("stub1 order fulfilled: %+v\n", e.Data)
 	}))
-	s3 := listenAny[OrderFulfilledEvent]("OrderFulfilledEvent", stub1)(stub2.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent]) {
+	s3 := listenAny[OrderFulfilledEvent, User]("OrderFulfilledEvent", stub1)(stub2.SentEvents()).Subscribe(ro.OnNext(func(e SocketEvent[OrderFulfilledEvent, User]) {
 		fmt.Printf("stub2 order fulfilled: %+v\n", e.Data)
 	}))
 	defer s.Unsubscribe()
@@ -171,14 +171,14 @@ func TestStress(t *testing.T) {
 	testStream := ro.Pipe3(
 		ro.Merge(
 			hub.Events(),
-			ToAnySocketEvent(stub1)(stub1.SentEvents()),
-			ToAnySocketEvent(stub2)(stub2.SentEvents()),
-			ToAnySocketEvent(stub3)(stub3.SentEvents())),
-		ro.Filter(func(e AnySocketEvent) bool {
+			ToAnySocketEvent[User](stub1)(stub1.SentEvents()),
+			ToAnySocketEvent[User](stub2)(stub2.SentEvents()),
+			ToAnySocketEvent[User](stub3)(stub3.SentEvents())),
+		ro.Filter(func(e AnySocketEvent[User]) bool {
 			_, ok := e.Data.(TestEvent)
 			return ok
 		}),
-		ro.Map(func(e AnySocketEvent) int {
+		ro.Map(func(e AnySocketEvent[User]) int {
 			return e.Data.(TestEvent).X
 		}),
 		ro.ShareReplay[int](1000),

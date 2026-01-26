@@ -35,10 +35,11 @@ type JSONEvent struct {
 // AnySocketEvent represents a type-erased event with a known provenance.
 // Socket may be nil, but that represents an event with no
 // source, such as a programatically determined one.
-type AnySocketEvent struct {
-	Name   string
-	Data   any
-	Socket Socket
+type AnySocketEvent[U any] struct {
+	Name     string
+	Data     any
+	Socket   Socket
+	UserInfo U
 }
 
 func AsJSON(a any) (json.RawMessage, error) {
@@ -48,39 +49,27 @@ func AsJSON(a any) (json.RawMessage, error) {
 	return json.Marshal(a)
 }
 
-func (a AnySocketEvent) AsAnyEvent() (AnyEvent, error) {
+func (a AnySocketEvent[U]) AsAnyEvent() (AnyEvent, error) {
 	return AnyEvent{Name: a.Name, Data: a.Data}, nil
-	// j, err := AsJSON(a.Data)
-	// if err != nil {
-	// 	return AnyEvent{}, err
-	// }
-	// return AnyEvent{Name: a.Name, Data: j}, nil
 }
 
 // SocketEvent is a parameterized event with a known provenance.
 // Socket may be nil, but that represents an event with no
 // source, such as a programatically determined one.
-type SocketEvent[T any] struct {
-	Name   string
-	Data   T
-	Socket Socket
+type SocketEvent[T any, U any] struct {
+	Name     string
+	Data     T
+	Socket   Socket
+	UserInfo U
+}
+type EmptySocketEvent[U any] = SocketEvent[Empty, U]
+
+func (a SocketEvent[T, U]) AsAnyEvent() (AnyEvent, error) {
+	return AnySocketEvent[U]{Name: a.Name, Data: a.Data, Socket: a.Socket}.AsAnyEvent()
 }
 
-func (a SocketEvent[T]) AsAnyEvent() (AnyEvent, error) {
-	return AnySocketEvent{Name: a.Name, Data: a.Data, Socket: a.Socket}.AsAnyEvent()
-}
-
-type ConnectEvent[T any] struct {
-	UserInfo T
-}
-
-type CloseEvent[T any] struct {
-	UserInfo T
-}
-
-type ErrorEvent[T any] struct {
-	Err      error
-	UserInfo T
+type ErrorEvent struct {
+	Err error
 }
 
 type SubscriptionOptions struct {
@@ -97,47 +86,49 @@ func NewSubscriptionsForEvents(eventNames ...string) []SubscriptionOptions {
 	return subscriptions
 }
 
-func Cast[T any](e AnySocketEvent) (SocketEvent[T], error) {
+func Cast[T any, U any](e AnySocketEvent[U]) (SocketEvent[T, U], error) {
 	if t, ok := e.Data.(T); ok {
-		return SocketEvent[T]{
-			Name:   e.Name,
-			Data:   t,
-			Socket: e.Socket,
+		return SocketEvent[T, U]{
+			Name:     e.Name,
+			Data:     t,
+			Socket:   e.Socket,
+			UserInfo: e.UserInfo,
 		}, nil
 	} else if j, ok := e.Data.(json.RawMessage); ok {
 		var d T
 		err := json.Unmarshal(j, &d)
 		if err != nil {
-			return SocketEvent[T]{}, err
+			return SocketEvent[T, U]{}, err
 		}
-		return SocketEvent[T]{
-			Name:   e.Name,
-			Data:   d,
-			Socket: e.Socket,
+		return SocketEvent[T, U]{
+			Name:     e.Name,
+			Data:     d,
+			Socket:   e.Socket,
+			UserInfo: e.UserInfo,
 		}, nil
 	} else {
-		return SocketEvent[T]{}, ErrCannotCastType
+		return SocketEvent[T, U]{}, ErrCannotCastType
 	}
 }
 
-func WithCast[T any, U any](a AnySocketEvent, callback func(SocketEvent[T]) U) U {
+func WithCast[T any, U any, V any](a AnySocketEvent[U], callback func(SocketEvent[T, U]) V) V {
 	event, err := Cast[T](a)
 	if err != nil {
 		// couldn't cast
-		var zero U
+		var zero V
 		return zero
 	}
 	return callback(event)
 }
 
-func WhenCast[T any](a AnySocketEvent, callback func(SocketEvent[T])) {
-	WithCast(a, func(t SocketEvent[T]) struct{} {
+func WhenCast[T any, U any](a AnySocketEvent[U], callback func(SocketEvent[T, U])) {
+	WithCast(a, func(t SocketEvent[T, U]) struct{} {
 		callback(t)
 		return struct{}{}
 	})
 }
 
-func On[T any](eventName string, a AnySocketEvent, callback func(SocketEvent[T])) {
+func On[T any, U any](eventName string, a AnySocketEvent[U], callback func(SocketEvent[T, U])) {
 	if a.Name != eventName {
 		return
 	}
