@@ -1,6 +1,17 @@
 package websocket
 
-import "github.com/samber/mo"
+type hubRequestKind int
+
+const (
+	hubRequestRegister hubRequestKind = iota
+	hubRequestUnregister
+	hubRequestPublish
+	hubRequestUserInfo
+	hubRequestClose
+	hubRequestSocketEvent  // an event was received from a registered socket
+	hubRequestSocketError  // a registered socket's stream errored
+	hubRequestSocketClosed // a registered socket's stream completed
+)
 
 type hubRegistrationData[T any] struct {
 	socket  Socket
@@ -18,61 +29,44 @@ type publishData[T any] struct {
 	data      any
 }
 
-type _hubRequest[T any] = mo.Either5[hubRegistrationData[T], Socket, publishData[T], hubUserInfoData[T], bool]
-type hubRequest[T any] _hubRequest[T]
+type hubRequest[T any] struct {
+	kind         hubRequestKind
+	registration hubRegistrationData[T]
+	socket       Socket
+	publish      publishData[T]
+	userInfo     hubUserInfoData[T]
+	event        AnyEvent
+	err          error
+}
 
 func newRegisterRequest[T any](socket Socket, options HubRegistrationOptions[T]) hubRequest[T] {
-	return hubRequest[T](mo.NewEither5Arg1[hubRegistrationData[T], Socket, publishData[T], hubUserInfoData[T], bool](hubRegistrationData[T]{socket: socket, options: options}))
+	return hubRequest[T]{kind: hubRequestRegister, registration: hubRegistrationData[T]{socket: socket, options: options}}
 }
 
 func newUnregisterRequest[T any](socket Socket) hubRequest[T] {
-	return hubRequest[T](mo.NewEither5Arg2[hubRegistrationData[T], Socket, publishData[T], hubUserInfoData[T], bool](socket))
+	return hubRequest[T]{kind: hubRequestUnregister, socket: socket}
 }
 
 func newPublishRequest[T any](condition func(T) bool, name string, data any) hubRequest[T] {
-	return hubRequest[T](mo.NewEither5Arg3[hubRegistrationData[T], Socket, publishData[T], hubUserInfoData[T], bool](publishData[T]{condition: condition, name: name, data: data}))
+	return hubRequest[T]{kind: hubRequestPublish, publish: publishData[T]{condition: condition, name: name, data: data}}
 }
 
 func newUserInfoRequest[T any](socket Socket, userInfo T) hubRequest[T] {
-	return hubRequest[T](mo.NewEither5Arg4[hubRegistrationData[T], Socket, publishData[T], hubUserInfoData[T], bool](hubUserInfoData[T]{socket: socket, userInfo: userInfo}))
+	return hubRequest[T]{kind: hubRequestUserInfo, userInfo: hubUserInfoData[T]{socket: socket, userInfo: userInfo}}
 }
 
 func newCloseRequest[T any]() hubRequest[T] {
-	return hubRequest[T](mo.NewEither5Arg5[hubRegistrationData[T], Socket, publishData[T], hubUserInfoData[T], bool](true))
+	return hubRequest[T]{kind: hubRequestClose}
 }
 
-func (h hubRequest[T]) isRegister() bool {
-	return (_hubRequest[T])(h).IsArg1()
+func newSocketEventRequest[T any](socket Socket, event AnyEvent) hubRequest[T] {
+	return hubRequest[T]{kind: hubRequestSocketEvent, socket: socket, event: event}
 }
 
-func (h hubRequest[T]) mustRegister() hubRegistrationData[T] {
-	return (_hubRequest[T])(h).MustArg1()
+func newSocketErrorRequest[T any](socket Socket, err error) hubRequest[T] {
+	return hubRequest[T]{kind: hubRequestSocketError, socket: socket, err: err}
 }
 
-func (h hubRequest[T]) isUnregister() bool {
-	return (_hubRequest[T])(h).IsArg2()
-}
-
-func (h hubRequest[T]) mustUnregister() Socket {
-	return (_hubRequest[T])(h).MustArg2()
-}
-
-func (h hubRequest[T]) isPublish() bool {
-	return (_hubRequest[T])(h).IsArg3()
-}
-
-func (h hubRequest[T]) mustPublish() publishData[T] {
-	return (_hubRequest[T])(h).MustArg3()
-}
-
-func (h hubRequest[T]) isUserInfo() bool {
-	return (_hubRequest[T])(h).IsArg4()
-}
-
-func (h hubRequest[T]) mustUserInfo() hubUserInfoData[T] {
-	return (_hubRequest[T])(h).MustArg4()
-}
-
-func (h hubRequest[T]) isClose() bool {
-	return (_hubRequest[T])(h).IsArg5()
+func newSocketClosedRequest[T any](socket Socket) hubRequest[T] {
+	return hubRequest[T]{kind: hubRequestSocketClosed, socket: socket}
 }

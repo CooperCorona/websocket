@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -21,11 +22,11 @@ const (
 	// Send pings to peer with this period. Must be less than pongWait.
 	pingPeriod = (pongWait * 9) / 10
 
-	// Maximum message size allowed from peer.
-	maxMessageSize = 512
+	// Maximum message size allowed from peer (64 KiB).
+	maxMessageSize = 65536
 
-	// size of the buffer for Websocket channels.
-	DefaultBufferSize = 8
+	// Size of the send buffer for each Websocket connection.
+	DefaultBufferSize = 64
 )
 
 var (
@@ -42,12 +43,22 @@ type Websocket struct {
 
 	// observable is an observable wrapping emit.
 	observable ro.Subject[AnyEvent]
+
+	// mu guards closed and the closing of send.
+	mu     sync.Mutex
+	closed bool
 }
 
-func NewWebsocket(conn *websocket.Conn, options ConfigurationOptions) Websocket {
-	send := make(chan AnyEvent, options.BufferSize)
-	observable := ro.NewSubject[AnyEvent]()
-	return Websocket{conn, send, observable}
+func NewWebsocket(conn *websocket.Conn, options ConfigurationOptions) *Websocket {
+	bufferSize := options.BufferSize
+	if bufferSize <= 0 {
+		bufferSize = DefaultBufferSize
+	}
+	return &Websocket{
+		conn:       conn,
+		send:       make(chan AnyEvent, bufferSize),
+		observable: ro.NewSubject[AnyEvent](),
+	}
 }
 
 var DefaultUpgrader = websocket.Upgrader{
@@ -66,11 +77,21 @@ func UpgradeWebsocket(upgrader websocket.Upgrader, w http.ResponseWriter, req *h
 	// new goroutines.
 	go client.writePump()
 	go client.readPump()
-	return &client, nil
+	return client, nil
 }
 
 func (w *Websocket) Send(event AnyEvent) {
-	w.send <- event
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
+	select {
+	case w.send <- event:
+	default:
+		// The write pump is dead or backed up; drop rather than block the hub.
+		log.Printf("websocket send buffer full; dropping event %s", event.Name)
+	}
 }
 
 func (w *Websocket) Events() ro.Observable[AnyEvent] {
@@ -78,6 +99,12 @@ func (w *Websocket) Events() ro.Observable[AnyEvent] {
 }
 
 func (w *Websocket) Close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
+	w.closed = true
 	close(w.send)
 }
 
@@ -88,6 +115,7 @@ func (w *Websocket) Close() {
 // reads from this goroutine.
 func (w *Websocket) readPump() {
 	defer func() {
+		w.Close()
 		w.conn.Close()
 	}()
 	w.conn.SetReadLimit(maxMessageSize)

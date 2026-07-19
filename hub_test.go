@@ -3,6 +3,7 @@ package websocket
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -97,15 +98,18 @@ func TestCrepes(t *testing.T) {
 	hub.SetUserInfo(stub1, User{"A"})
 	hub.SetUserInfo(stub2, User{"B"})
 	orders := make(map[string][]Order)
+	var ordersMu sync.Mutex
 	s := Listen[CrepeEvent, User]("CrepeEvent")(hub.Events()).Subscribe(ro.OnNext(func(e SocketEvent[CrepeEvent, User]) {
 		user := e.UserInfo
 		o := Order{e.Data.Name, user.ID()}
 		fmt.Printf("Pushed: %+v\n", o)
+		ordersMu.Lock()
 		if ords, ok := orders[user.ID()]; ok {
 			orders[user.ID()] = append(ords, o)
 		} else {
 			orders[user.ID()] = []Order{o}
 		}
+		ordersMu.Unlock()
 	}))
 	// Listen doesn't work because it's not a SocketEvent. Maybe we need to make it a SocketEvent and just discard
 	// the socket, allowing it to be nil.
@@ -142,12 +146,14 @@ outerLoop:
 			} else {
 				user = "B"
 			}
+			ordersMu.Lock()
 			fmt.Printf("Consuming order for %s. Count: %d\n", user, len(orders[user]))
 			names := make([]string, len(orders[user]))
 			for i, u := range orders[user] {
 				names[i] = u.Name
 			}
 			orders[user] = []Order{}
+			ordersMu.Unlock()
 			// Want to be able to publish to groups, say, based on role.
 			hub.Publish(WithID[User](user), "OrderFulfilledEvent", OrderFulfilledEvent{Names: names})
 			// Can do both at once by specifying an individual ID in the filter callback.
@@ -158,6 +164,33 @@ outerLoop:
 			}
 		}
 	}
+}
+
+func TestConcurrentPublishAndDisconnect(t *testing.T) {
+	hub := NewHub[User]()
+	stubs := make([]*SocketStub, 20)
+	for i := range stubs {
+		stubs[i] = NewStub()
+		hub.Register(stubs[i])
+	}
+	// Allow hub to process registrations.
+	time.Sleep(50 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 200; i++ {
+			hub.Broadcast("TestEvent", TestEvent{i})
+		}
+	}()
+	go func() {
+		for i := 0; i < 10; i++ {
+			stubs[i].Close()
+		}
+		close(done)
+	}()
+	<-done
+	time.Sleep(100 * time.Millisecond)
+	hub.Close()
 }
 
 func TestStress(t *testing.T) {
@@ -212,5 +245,9 @@ func TestStress(t *testing.T) {
 	hub.Close()
 	time.Sleep(time.Second / 10.0)
 
-	rotesting.Assert[int](t).Source(testStream).ExpectNextSeq(10, 20, 30, 30, 30).Verify()
+	// hub.Events() carries JSON bytes for socket-posted events, failing the TestEvent
+	// type assertion in the filter. Only events sent TO stubs via hub.Publish/Broadcast
+	// carry the original Go value and pass the filter. With 3 registered stubs, each
+	// receives one HubEvent{30}, yielding three 30s.
+	rotesting.Assert[int](t).Source(testStream).ExpectNextSeq(30, 30, 30).Verify()
 }
